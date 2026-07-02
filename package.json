@@ -9,8 +9,8 @@
     "build": "vite build",
     "preview": "vite preview"
   },
+  "homepage": "https://zeusnightbolt.github.io/BlackjackTrainer/",
   "dependencies": {
-    "playwright": "^1.61.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

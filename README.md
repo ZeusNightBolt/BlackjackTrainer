@@ -9,6 +9,8 @@ An interactive trainer for **basic strategy** and **Hi-Lo card counting**, built
 
 > Educational tool. Real casino conditions vary; see the disclaimer below.
 
+**Live app:** https://zeusnightbolt.github.io/BlackjackTrainer/
+
 ---
 
 ## Features
@@ -63,11 +65,9 @@ npm run preview
 
 ## Deploy to GitHub Pages
 
-A workflow is included at `.github/workflows/deploy.yml`. To use it:
+Deployed at **https://zeusnightbolt.github.io/BlackjackTrainer/** via the workflow at `.github/workflows/deploy.yml`.
 
-1. Push this repo to GitHub with the default branch named `main`.
-2. In the repo, go to **Settings → Pages → Build and deployment → Source** and select **GitHub Actions**.
-3. Every push to `main` builds and publishes the site. `vite.config.js` uses `base: "./"` (relative asset paths), so it works on a Pages project URL without extra configuration.
+That workflow (already enabled: **Settings → Pages → Build and deployment → Source → GitHub Actions**) builds and publishes the site on every push to `main`. `vite.config.js` uses `base: "./"` (relative asset paths), so it works on a Pages project URL without extra configuration.
 
 ---
 
