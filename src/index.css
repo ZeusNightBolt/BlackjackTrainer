@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Dark background at the root so there is no white flash or overscroll gap.
+   These rules come after Tailwind's preflight and intentionally override it. */
+:root {
+  color-scheme: dark;
+}
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+  background: #0a0e0c;
+  color: #e8efeb;
+}
+body {
+  min-height: 100vh;
+}
