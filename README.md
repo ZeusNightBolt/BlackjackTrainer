@@ -31,6 +31,7 @@ An interactive trainer for **basic strategy** and **Hi-Lo card counting**, built
 - **Coaching on every move** — a panel explains the *why* behind the correct play (basic strategy, a count deviation, or surrender) on correct plays too — learning, not just a verdict.
 - **Training aids** — show/hide the ± tags on each card, a hide-count "test me" mode with reveal-to-check.
 - **Variance meter** — how often you misplay a hand and still win, plus strategy accuracy, count-play accuracy, net $, and W-L-P.
+- **Casino feel, phone-first** — animated card deals and hole-card flips, casino-style chips, a win/lose glow on the felt, and on phones the action buttons dock to the bottom of the screen so Hit/Stand are always under your thumb. Bankroll, session stats, and settings persist in `localStorage`, so closing the tab doesn't reset your session.
 
 > **Deep dive:** [STRATEGY.md](STRATEGY.md) documents the full math — the 16-vs-a-King EV table (you lose ~77% no matter what), the complete surrender set, the honest case for *why the count barely matters on 6 decks over a short session*, the Illustrious 18 / Fab 4 indices, and count-based vs. win/loss-progression bet sizing.
 
