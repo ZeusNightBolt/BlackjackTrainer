@@ -183,17 +183,31 @@ function explainPlay(cards, dUp, correct, isDev, rec, tcFloor, canSplit) {
 }
 
 /* ------------------------------ Card UI ------------------------------ */
-function PlayingCard({ card, hidden, small, tagVal }) {
-  const w = small ? 38 : 52, h = small ? 54 : 74;
-  if (hidden) return <div style={{ width: w, height: h, borderRadius: 8, background: "repeating-linear-gradient(45deg,#122,#122 5px,#1b3a52 5px,#1b3a52 10px)", border: "1px solid #2b4a63" }} />;
+/* anim: "deal" slides the card in off the shoe; "flip" turns the hole card over. */
+function PlayingCard({ card, hidden, small, tagVal, anim, delay = 0 }) {
+  const w = small ? 42 : 56, h = small ? 60 : 80;
+  const cls = anim === "deal" ? "card-deal" : anim === "flip" ? "card-flip" : "";
+  const style = { animationDelay: delay ? `${delay}ms` : undefined };
+  if (hidden) return (
+    <div className={cls} style={{ ...style, width: w, height: h, borderRadius: 8, border: "1px solid #2b4a63", padding: 3, background: "#16283a", boxShadow: "0 3px 8px rgba(0,0,0,.45)" }}>
+      <div style={{ width: "100%", height: "100%", borderRadius: 5, border: "1px solid rgba(120,170,215,.4)", background: "repeating-linear-gradient(45deg,#122032,#122032 4px,#1b3a52 4px,#1b3a52 8px)" }} />
+    </div>
+  );
   const showTag = tagVal !== undefined && tagVal !== null;
   const tCol = tagVal > 0 ? C.split : tagVal < 0 ? C.stand : C.sub;
+  const ink = card.red ? "#c62828" : "#1a1a1a";
+  const corner = (flip) => (
+    <span style={{ display: "flex", flexDirection: "column", alignItems: "center", lineHeight: 1, transform: flip ? "rotate(180deg)" : "none", alignSelf: flip ? "flex-end" : "flex-start" }}>
+      <span style={{ fontWeight: 800, fontSize: small ? 12 : 15, color: ink }}>{card.rank}</span>
+      <span style={{ fontSize: small ? 9 : 11, color: ink, marginTop: 1 }}>{card.suit}</span>
+    </span>
+  );
   return (
-    <div style={{ position: "relative", width: w, height: h, borderRadius: 8, background: "#f7f7f2", border: "1px solid #d8d8cf", boxShadow: "0 3px 8px rgba(0,0,0,.45)", display: "flex", flexDirection: "column", justifyContent: "space-between", padding: small ? 3 : 5 }}>
-      <span style={{ fontWeight: 800, fontSize: small ? 13 : 17, lineHeight: 1, color: card.red ? "#c62828" : "#151515" }}>{card.rank}</span>
-      <span style={{ textAlign: "center", fontSize: small ? 15 : 20, color: card.red ? "#c62828" : "#151515" }}>{card.suit}</span>
-      <span style={{ alignSelf: "flex-end", fontWeight: 800, fontSize: small ? 13 : 17, lineHeight: 1, transform: "rotate(180deg)", color: card.red ? "#c62828" : "#151515" }}>{card.rank}</span>
-      {showTag && <span style={{ position: "absolute", top: -7, right: -7, background: tCol, color: "#0a0e0c", fontWeight: 800, fontSize: 9, borderRadius: 5, padding: "1px 4px", fontFamily: "'IBM Plex Mono',monospace" }}>{tagVal > 0 ? "+1" : tagVal < 0 ? "−1" : "0"}</span>}
+    <div className={cls} style={{ ...style, position: "relative", width: w, height: h, borderRadius: 8, background: "linear-gradient(150deg,#ffffff 0%,#f4f4ec 55%,#e9e9df 100%)", border: "1px solid #d0d0c5", boxShadow: "0 3px 8px rgba(0,0,0,.45)", display: "flex", flexDirection: "column", justifyContent: "space-between", padding: small ? 3 : 4 }}>
+      {corner(false)}
+      <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: small ? 18 : 26, color: ink, opacity: .92 }}>{card.suit}</span>
+      {corner(true)}
+      {showTag && <span style={{ position: "absolute", top: -7, right: -7, background: tCol, color: "#0a0e0c", fontWeight: 800, fontSize: 9, borderRadius: 5, padding: "1px 4px", fontFamily: "'IBM Plex Mono',monospace", boxShadow: "0 1px 3px rgba(0,0,0,.4)" }}>{tagVal > 0 ? "+1" : tagVal < 0 ? "−1" : "0"}</span>}
     </div>
   );
 }
@@ -219,6 +233,12 @@ const INIT_AGG = { rounds: 0, handsWon: 0, handsLost: 0, handsPush: 0, decisions
 const CUT = 60; // reshuffle when fewer than ~1.15 decks remain (≈80% penetration)
 const STARTING_BALANCE = 1000;
 const CHIPS = [5, 25, 100];
+const CHIP_STYLE = { 5: "linear-gradient(160deg,#e05252,#a83232)", 25: "linear-gradient(160deg,#2f9e6e,#1d6b4a)", 100: "linear-gradient(160deg,#3f4650,#22262c)" };
+
+/* Session persistence — bankroll, session stats, and settings survive a tab close (static-host friendly). */
+const LS_KEY = "bjt-save-v1";
+function loadSaved() { try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch { return {}; } }
+const SAVED = loadSaved();
 
 export default function App() {
   const [tab, setTab] = useState("learn");
@@ -233,15 +253,19 @@ export default function App() {
   const [cellInfo, setCellInfo] = useState(null);
   // full game
   const [g, setG] = useState(INIT_G);
-  const [agg, setAgg] = useState(INIT_AGG);
-  const [useDev, setUseDev] = useState(true);
-  const [betWithCount, setBetWithCount] = useState(false);
-  const [balance, setBalance] = useState(STARTING_BALANCE);
-  const [chipSize, setChipSize] = useState(25);
-  const [showTags, setShowTags] = useState(true);
-  const [hideCount, setHideCount] = useState(false);
+  const [agg, setAgg] = useState(SAVED.agg || INIT_AGG);
+  const [useDev, setUseDev] = useState(SAVED.useDev ?? true);
+  const [betWithCount, setBetWithCount] = useState(SAVED.betWithCount ?? false);
+  const [balance, setBalance] = useState(SAVED.balance ?? STARTING_BALANCE);
+  const [chipSize, setChipSize] = useState(SAVED.chipSize ?? 25);
+  const [showTags, setShowTags] = useState(SAVED.showTags ?? true);
+  const [hideCount, setHideCount] = useState(SAVED.hideCount ?? false);
   const [reveal, setReveal] = useState(false);
   const [primer, setPrimer] = useState(false);
+
+  useEffect(() => {
+    try { localStorage.setItem(LS_KEY, JSON.stringify({ balance, chipSize, agg, useDev, betWithCount, showTags, hideCount })); } catch { /* private mode */ }
+  }, [balance, chipSize, agg, useDev, betWithCount, showTags, hideCount]);
 
   const deal = useCallback(() => { setAnswered(null); setSc(buildScenario(ruleSet, cats)); }, [ruleSet, cats]);
   useEffect(() => { deal(); }, [deal]);
@@ -414,15 +438,47 @@ export default function App() {
   return (
     <div style={{ minHeight: "100vh", background: C.bg, color: C.ink, fontFamily: "'Space Grotesk',system-ui,sans-serif" }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@500;700&display=swap');
         :root{color-scheme:dark;} *{box-sizing:border-box;}
+        button{touch-action:manipulation;-webkit-tap-highlight-color:transparent;user-select:none;}
         button:active{transform:translateY(1px);} button:disabled{cursor:not-allowed;}
+        button:focus-visible{outline:2px solid ${C.gold};outline-offset:2px;}
         .mono{font-family:'IBM Plex Mono',monospace;}
         /* Single-frame game layout: table on the left, coaching/results on the right on wide screens; stacked on phones. */
         .game-grid{display:grid;grid-template-columns:1fr;gap:14px;align-items:start;}
         @media(min-width:860px){.game-grid{grid-template-columns:minmax(360px,1.05fr) minmax(300px,0.95fr);}}
         .game-side{position:sticky;top:76px;}
         @media(max-width:859px){.game-side{position:static;}}
+        /* --- motion --- */
+        @keyframes dealIn{from{opacity:0;transform:translateY(-14px) rotate(-4deg) scale(.92);}to{opacity:1;transform:none;}}
+        @keyframes flipIn{0%{transform:rotateY(88deg);opacity:.4;}100%{transform:rotateY(0);opacity:1;}}
+        @keyframes popIn{0%{transform:scale(.4);opacity:0;}70%{transform:scale(1.12);}100%{transform:scale(1);opacity:1;}}
+        @keyframes floatUp{0%{opacity:0;transform:translateY(4px);}18%{opacity:1;}100%{opacity:0;transform:translateY(-24px);}}
+        @keyframes activePulse{0%,100%{outline-color:${C.gold};box-shadow:0 0 10px rgba(232,182,76,.18);}50%{outline-color:#f4cf7d;box-shadow:0 0 20px rgba(232,182,76,.5);}}
+        .card-deal{animation:dealIn .32s cubic-bezier(.2,.9,.3,1.2) both;}
+        .card-flip{animation:flipIn .4s ease-out both;}
+        .result-pop{animation:popIn .3s cubic-bezier(.2,.9,.3,1.4) both;}
+        .delta-float{animation:floatUp 1.6s ease-out both;pointer-events:none;}
+        .hand-active{animation:activePulse 1.5s ease-in-out infinite;}
+        /* --- casino chip buttons --- */
+        .chip-btn{width:50px;height:50px;border-radius:50%;font-weight:800;font-size:12px;cursor:pointer;position:relative;border:none;
+          display:inline-flex;align-items:center;justify-content:center;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.55);
+          box-shadow:0 3px 6px rgba(0,0,0,.5), inset 0 -2px 4px rgba(0,0,0,.35), inset 0 2px 3px rgba(255,255,255,.2);transition:transform .12s ease, box-shadow .12s ease;}
+        .chip-btn::before{content:"";position:absolute;inset:5px;border-radius:50%;border:2px dashed rgba(255,255,255,.5);}
+        .chip-btn.sel{transform:translateY(-3px);box-shadow:0 6px 12px rgba(0,0,0,.55), inset 0 -2px 4px rgba(0,0,0,.35), inset 0 2px 3px rgba(255,255,255,.2), 0 0 0 3px ${C.gold};}
+        .chip-btn:disabled{opacity:.45;transform:none;}
+        /* --- felt --- */
+        .felt{background:radial-gradient(ellipse at 50% 30%, ${C.felt}, ${C.feltDark} 85%);
+          box-shadow:inset 0 0 46px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.05);
+          border:1px solid ${C.border};transition:box-shadow .4s ease, border-color .4s ease;}
+        .felt.won{border-color:${C.split};box-shadow:inset 0 0 46px rgba(0,0,0,.45), 0 0 18px rgba(52,211,153,.28);}
+        .felt.lost{border-color:${C.stand};box-shadow:inset 0 0 46px rgba(0,0,0,.45), 0 0 18px rgba(251,91,107,.25);}
+        /* --- sticky thumb-reach action bar on phones --- */
+        @media(max-width:859px){
+          .action-dock{position:sticky;bottom:0;z-index:15;margin:0 -16px;padding:10px 16px calc(10px + env(safe-area-inset-bottom));
+            background:linear-gradient(to top, ${C.bg} 72%, rgba(10,14,12,0));}
+        }
+        .act-btn{min-height:52px;}
+        @media(prefers-reduced-motion:reduce){.card-deal,.card-flip,.result-pop,.delta-float,.hand-active{animation:none;}}
       `}</style>
 
       <header className="sticky top-0 z-20" style={{ background: C.panel, borderBottom: `1px solid ${C.border}` }}>
@@ -490,11 +546,11 @@ export default function App() {
                 <div className="text-xs mb-3" style={{ color: C.sub }}>One decision at a time — pure basic strategy reps to burn the chart into memory.</div>
                 <div className="grid grid-cols-3 gap-2 mb-3"><Stat label="Accuracy" value={`${acc}%`} sub={`${stats.correct}/${stats.total}`} color={C.gold} /><Stat label="Streak" value={stats.streak} sub={`best ${stats.best}`} color={C.split} /><Stat label="Playing" value={sc.dealer} sub="dealer shows" color={C.double} /></div>
                 <div className="flex items-center justify-between mb-3 flex-wrap gap-2"><div className="flex gap-1.5">{catBtn("hard", "Hard")}{catBtn("soft", "Soft")}{catBtn("pairs", "Pairs")}</div>{toggle(auto, setAuto, "Auto-deal on correct")}</div>
-                <div className="rounded-2xl p-4 mb-3" style={{ background: `radial-gradient(ellipse at center, ${C.felt}, ${C.feltDark})`, border: `1px solid ${C.border}` }}>
+                <div key={`${stats.total}-${sc.label}-${sc.dealer}`} className="rounded-2xl p-4 mb-3 felt">
                   <div className="text-xs mb-1" style={{ color: "rgba(255,255,255,.6)" }}>Dealer</div>
-                  <div className="flex gap-2 mb-4"><PlayingCard card={sc.dealerCard} /><PlayingCard hidden /></div>
+                  <div className="flex gap-2 mb-4"><PlayingCard card={sc.dealerCard} anim="deal" /><PlayingCard hidden anim="deal" delay={90} /></div>
                   <div className="text-xs mb-1" style={{ color: "rgba(255,255,255,.6)" }}>You</div>
-                  <div className="flex gap-2">{sc.cards.map((c, i) => <PlayingCard key={i} card={c} />)}</div>
+                  <div className="flex gap-2">{sc.cards.map((c, i) => <PlayingCard key={i} card={c} anim="deal" delay={140 + i * 90} />)}</div>
                 </div>
                 <div className="grid gap-2" style={{ gridTemplateColumns: fcButtons.length === 4 ? "1fr 1fr" : "1fr 1fr 1fr" }}>
                   {fcButtons.map((k) => { const chosen = answered && answered.choice === k, right = answered && sc.correct === k; let ring = "transparent"; if (answered) { if (right) ring = C.split; else if (chosen) ring = C.stand; } return <button key={k} onClick={() => answer(k)} style={{ padding: "14px 0", borderRadius: 12, cursor: answered ? "default" : "pointer", fontWeight: 800, fontSize: 15, color: "#0a0e0c", background: MOVE[k].color, opacity: answered && !right && !chosen ? 0.4 : 1, outline: `3px solid ${ring}`, outlineOffset: 2, border: "none" }}>{MOVE[k].label}</button>; })}
@@ -515,22 +571,25 @@ export default function App() {
               <div>
                 <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
                   <div className="text-xs" style={{ color: C.sub }}>6 decks · dealer peeks &amp; hits soft 17 · 3:2 · late surrender · Hi-Lo</div>
-                  <button onClick={() => { setG(INIT_G); setAgg(INIT_AGG); setBalance(STARTING_BALANCE); }} style={{ padding: "4px 10px", borderRadius: 8, border: `1px solid ${C.border}`, background: "transparent", color: C.sub, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Reset</button>
+                  <button onClick={() => { setG(INIT_G); setAgg(INIT_AGG); setBalance(STARTING_BALANCE); try { localStorage.removeItem(LS_KEY); } catch {} }} style={{ padding: "4px 10px", borderRadius: 8, border: `1px solid ${C.border}`, background: "transparent", color: C.sub, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Reset</button>
                 </div>
 
                 {/* ===== BANKROLL + BET SIZING (top, right above the game) ===== */}
                 <div className="rounded-xl p-3 mb-2" style={{ background: C.panel, border: `1px solid ${C.gold}` }}>
                   <div className="flex items-center justify-between flex-wrap gap-2">
-                    <div>
+                    <div style={{ position: "relative" }}>
                       <div className="text-xs" style={{ color: C.sub }}>Balance</div>
                       <div className="mono" style={{ color: balance >= STARTING_BALANCE ? C.split : balance <= 0 ? C.stand : C.ink, fontSize: 22, fontWeight: 700, lineHeight: 1 }}>{fmtMoney(balance)}</div>
+                      {g.phase === "done" && g.roundNet !== 0 && (
+                        <span key={agg.rounds} className="delta-float mono" style={{ position: "absolute", left: "100%", marginLeft: 8, top: 12, fontSize: 14, fontWeight: 700, whiteSpace: "nowrap", color: g.roundNet > 0 ? C.split : C.stand }}>{fmtSigned(g.roundNet)}</span>
+                      )}
                     </div>
                     <div>
                       <div className="text-xs text-right" style={{ color: C.sub }}>Chip</div>
-                      <div className="flex gap-1.5 mt-0.5">
+                      <div className="flex gap-2 mt-1">
                         {CHIPS.map((c) => {
                           const locked = g.phase === "player" || g.phase === "insurance";
-                          return <button key={c} disabled={locked} onClick={() => setChipSize(c)} style={{ padding: "7px 13px", borderRadius: 999, border: `1px solid ${chipSize === c ? C.gold : C.border}`, background: chipSize === c ? "rgba(232,182,76,.15)" : "transparent", color: chipSize === c ? C.gold : C.sub, fontWeight: 800, fontSize: 13, cursor: locked ? "not-allowed" : "pointer", opacity: locked ? 0.5 : 1 }}>${c}</button>;
+                          return <button key={c} disabled={locked} onClick={() => setChipSize(c)} className={"chip-btn" + (chipSize === c ? " sel" : "")} style={{ background: CHIP_STYLE[c] }}>${c}</button>;
                         })}
                       </div>
                     </div>
@@ -572,49 +631,53 @@ export default function App() {
                 </div>
 
                 {/* felt */}
-                <div className="rounded-2xl p-4 mb-3" style={{ background: `radial-gradient(ellipse at center, ${C.felt}, ${C.feltDark})`, border: `1px solid ${C.border}` }}>
+                <div className={"rounded-2xl p-4 mb-3 felt" + (g.phase === "done" ? (g.roundNet > 0 ? " won" : g.roundNet < 0 ? " lost" : "") : "")}>
                   <div className="flex items-center gap-2 mb-1"><span className="text-xs" style={{ color: "rgba(255,255,255,.6)" }}>Dealer</span>{g.dealerRevealed && g.dealer.length > 0 && <span className="mono text-xs" style={{ color: handTotal(g.dealer).total > 21 ? "#ffd7d7" : "#fff", fontWeight: 700 }}>{totalStr(g.dealer)}</span>}</div>
                   <div className="flex gap-2 mb-4" style={{ flexWrap: "wrap" }}>
                     {g.dealer.length === 0 ? <span className="text-xs" style={{ color: "rgba(255,255,255,.5)" }}>—</span> :
-                      g.dealerRevealed ? g.dealer.map((c, i) => <PlayingCard key={i} card={c} small tagVal={showTags ? tag(c) : null} />) : <><PlayingCard card={g.dealer[0]} small tagVal={showTags ? tag(g.dealer[0]) : null} /><PlayingCard hidden small /></>}
+                      g.dealerRevealed
+                        ? g.dealer.map((c, i) => <PlayingCard key={i} card={c} small tagVal={showTags ? tag(c) : null} anim={i === 1 ? "flip" : i > 1 ? "deal" : undefined} delay={i > 1 ? (i - 1) * 140 : 0} />)
+                        : <><PlayingCard card={g.dealer[0]} small tagVal={showTags ? tag(g.dealer[0]) : null} anim="deal" /><PlayingCard hidden small anim="deal" delay={90} /></>}
                   </div>
                   <div className="text-xs mb-1" style={{ color: "rgba(255,255,255,.6)" }}>You{g.hands.length > 1 ? ` · ${g.hands.length} hands` : ""}</div>
                   <div className="flex gap-3" style={{ flexWrap: "wrap" }}>
                     {g.hands.length === 0 ? <span className="text-xs" style={{ color: "rgba(255,255,255,.5)" }}>Press Deal to start</span> :
                       g.hands.map((h, hi) => { const isActive = g.phase === "player" && hi === g.active; const rc = h.result === "win" ? C.split : h.result === "lose" ? C.stand : h.result === "push" ? C.gold : h.result === "surrender" ? C.surrender : "transparent"; return (
-                        <div key={hi} style={{ padding: 6, borderRadius: 10, outline: isActive ? `2px solid ${C.gold}` : h.result ? `2px solid ${rc}` : "2px solid transparent", outlineOffset: 1 }}>
-                          <div className="flex gap-1.5">{h.cards.map((c, i) => <PlayingCard key={i} card={c} small tagVal={showTags ? tag(c) : null} />)}</div>
-                          <div className="flex items-center gap-1.5 mt-1"><span className="mono text-xs" style={{ color: "#fff", fontWeight: 700 }}>{totalStr(h.cards)}</span><span className="mono text-xs" style={{ color: "rgba(255,255,255,.55)" }}>{fmtMoney(h.bet)}</span>{h.doubled && <span className="text-xs" style={{ color: "rgba(255,255,255,.7)" }}>2x</span>}{h.result && <span style={{ background: rc, color: "#0a0e0c", fontWeight: 800, fontSize: 10, padding: "1px 6px", borderRadius: 4, textTransform: "uppercase" }}>{h.result}</span>}</div>
+                        <div key={hi} className={isActive ? "hand-active" : ""} style={{ padding: 6, borderRadius: 10, outline: isActive ? `2px solid ${C.gold}` : h.result ? `2px solid ${rc}` : "2px solid transparent", outlineOffset: 1 }}>
+                          <div className="flex gap-1.5">{h.cards.map((c, i) => <PlayingCard key={i} card={c} small tagVal={showTags ? tag(c) : null} anim="deal" delay={h.cards.length === 2 && i < 2 ? i * 90 : 0} />)}</div>
+                          <div className="flex items-center gap-1.5 mt-1"><span className="mono text-xs" style={{ color: "#fff", fontWeight: 700 }}>{totalStr(h.cards)}</span><span className="mono text-xs" style={{ color: "rgba(255,255,255,.55)" }}>{fmtMoney(h.bet)}</span>{h.doubled && <span className="text-xs" style={{ color: "rgba(255,255,255,.7)" }}>2x</span>}{h.result && <span className="result-pop" style={{ background: rc, color: "#0a0e0c", fontWeight: 800, fontSize: 10, padding: "1px 6px", borderRadius: 4, textTransform: "uppercase" }}>{h.result}</span>}</div>
                         </div>); })}
                   </div>
                 </div>
 
-                {/* insurance prompt / actions / deal */}
+                {/* insurance prompt / actions / deal — docked to the thumb on phones */}
+                <div className="action-dock">
                 {g.phase === "insurance" ? (
                   <div className="rounded-xl p-3 mb-1" style={{ background: C.panel, border: `1px solid ${C.double}` }}>
                     <div className="text-sm mb-2" style={{ color: C.ink }}><b style={{ color: C.double }}>Dealer shows an Ace.</b> Take insurance? {countVisible ? <span className="mono" style={{ color: C.sub }}>(TC {signed(tcFloor)})</span> : <span style={{ color: C.sub }}>— you're testing, so decide from your own count</span>}</div>
                     <div className="grid grid-cols-2 gap-2">
-                      <button onClick={() => resolveInsurance(true)} style={{ padding: "12px 0", borderRadius: 12, border: "none", cursor: "pointer", background: C.double, color: "#0a0e0c", fontWeight: 800, fontSize: 14 }}>Take insurance</button>
-                      <button onClick={() => resolveInsurance(false)} style={{ padding: "12px 0", borderRadius: 12, border: `1px solid ${C.border}`, cursor: "pointer", background: "transparent", color: C.ink, fontWeight: 800, fontSize: 14 }}>No insurance</button>
+                      <button className="act-btn" onClick={() => resolveInsurance(true)} style={{ padding: "12px 0", borderRadius: 12, border: "none", cursor: "pointer", background: C.double, color: "#0a0e0c", fontWeight: 800, fontSize: 14 }}>Take insurance</button>
+                      <button className="act-btn" onClick={() => resolveInsurance(false)} style={{ padding: "12px 0", borderRadius: 12, border: `1px solid ${C.border}`, cursor: "pointer", background: "transparent", color: C.ink, fontWeight: 800, fontSize: 14 }}>No insurance</button>
                     </div>
                   </div>
                 ) : g.phase === "player" ? (
                   <div>
                     {gCanSurrender && (
-                      <button onClick={() => playerAct("R")} style={{ width: "100%", padding: "10px 0", borderRadius: 12, border: `1px solid ${C.surrender}`, cursor: "pointer", background: "transparent", color: C.surrender, fontWeight: 800, fontSize: 13, marginBottom: 8 }}>Surrender <span style={{ opacity: .75, fontWeight: 600 }}>— give up half your bet</span></button>
+                      <button onClick={() => playerAct("R")} style={{ width: "100%", padding: "10px 0", borderRadius: 12, border: `1px solid ${C.surrender}`, cursor: "pointer", background: "rgba(167,139,250,.08)", color: C.surrender, fontWeight: 800, fontSize: 13, marginBottom: 8 }}>Surrender <span style={{ opacity: .75, fontWeight: 600 }}>— give up half your bet</span></button>
                     )}
                     <div className="grid grid-cols-4 gap-2">
-                      {[["H", gCanHit], ["S", gCanHit], ["D", gCanDouble], ["P", gCanSplit]].map(([k, on]) => <button key={k} disabled={!on} onClick={() => playerAct(k)} style={{ padding: "14px 0", borderRadius: 12, fontWeight: 800, fontSize: 14, color: "#0a0e0c", background: MOVE[k].color, opacity: on ? 1 : 0.28, border: "none", cursor: on ? "pointer" : "not-allowed" }}>{MOVE[k].label}</button>)}
+                      {[["H", gCanHit], ["S", gCanHit], ["D", gCanDouble], ["P", gCanSplit]].map(([k, on]) => <button key={k} className="act-btn" disabled={!on} onClick={() => playerAct(k)} style={{ padding: "14px 0", borderRadius: 12, fontWeight: 800, fontSize: 14, color: "#0a0e0c", background: MOVE[k].color, opacity: on ? 1 : 0.28, border: "none", cursor: on ? "pointer" : "not-allowed", boxShadow: on ? "0 2px 6px rgba(0,0,0,.35)" : "none" }}>{MOVE[k].label}</button>)}
                     </div>
                   </div>
                 ) : balance < chipSize ? (
                   <div className="rounded-xl p-3" style={{ background: C.panel, border: `1px solid ${C.stand}` }}>
                     <div className="text-sm mb-2" style={{ color: C.ink }}>Not enough balance for a {fmtMoney(chipSize)} bet. Pick a smaller chip above, or reset your bankroll.</div>
-                    <button onClick={() => setBalance(STARTING_BALANCE)} style={{ width: "100%", padding: "12px 0", borderRadius: 12, border: "none", cursor: "pointer", background: C.gold, color: "#0a0e0c", fontWeight: 800, fontSize: 14 }}>Reset bankroll to {fmtMoney(STARTING_BALANCE)}</button>
+                    <button className="act-btn" onClick={() => setBalance(STARTING_BALANCE)} style={{ width: "100%", padding: "12px 0", borderRadius: 12, border: "none", cursor: "pointer", background: C.gold, color: "#0a0e0c", fontWeight: 800, fontSize: 14 }}>Reset bankroll to {fmtMoney(STARTING_BALANCE)}</button>
                   </div>
                 ) : (
-                  <button onClick={dealNewRound} style={{ width: "100%", padding: "15px 0", borderRadius: 12, border: "none", cursor: "pointer", background: C.gold, color: "#0a0e0c", fontWeight: 800, fontSize: 15 }}>{g.phase === "idle" ? "Deal first hand" : "Deal next hand →"}</button>
+                  <button className="act-btn" onClick={dealNewRound} style={{ width: "100%", padding: "15px 0", borderRadius: 12, border: "none", cursor: "pointer", background: `linear-gradient(160deg, #f2c96a, ${C.gold})`, color: "#0a0e0c", fontWeight: 800, fontSize: 15, boxShadow: "0 3px 10px rgba(232,182,76,.25)" }}>{g.phase === "idle" ? "Deal first hand" : "Deal next hand →"}</button>
                 )}
+                </div>
                 </div>
 
                 {/* ---- RIGHT COLUMN: learning + results ---- */}
