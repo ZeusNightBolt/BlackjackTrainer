@@ -59,13 +59,15 @@ function basicOptimal(cards, dUp, canDouble, canSplit) {
   if (soft && total < 13) return "H";
   let L = AMH[hardKey(total)][i]; if (L === "D" && !canDouble) L = "H"; return L;
 }
-/* Late-surrender basic strategy (American, dealer peeks, H17, 6-deck). Checked before the H/S/D/P chart. */
+/* Late-surrender basic strategy (American, dealer peeks, H17, 6-deck). Checked before the H/S/D/P chart.
+   H17 set (verified by the combinatorial EV sim): 15 vs 10/A; 16 (non-pair) vs 9/10/A; 17 vs A; 8,8 vs A. */
 function shouldSurrender(cards, dUp) {
-  if (splittable(cards) && cards[0].val === 8) return false; // 8,8 always splits, never surrenders
   const { total, soft } = handTotal(cards);
   if (soft) return false;
+  if (splittable(cards) && cards[0].val === 8) return dUp === 11; // 8,8 surrenders only vs A (H17); otherwise it splits
   if (total === 16 && (dUp === 9 || dUp === 10 || dUp === 11)) return true;
-  if (total === 15 && dUp === 10) return true;
+  if (total === 15 && (dUp === 10 || dUp === 11)) return true;
+  if (total === 17 && dUp === 11) return true;
   return false;
 }
 /* Illustrious-18 deviations (Hi-Lo, 6-deck). Stand/double/split if TC >= index, else basicAlt. */
@@ -81,16 +83,40 @@ function deviationFor(cards, dUp, canSplit) {
   if (total === 9 && two) { if (dUp === 2) return { index: 1, action: "D", basicAlt: "H", label: "9" }; if (dUp === 7) return { index: 3, action: "D", basicAlt: "H", label: "9" }; return null; }
   return null;
 }
+/* Surrender count deviations (Hi-Lo, 6-deck H17). "Fab 4" plus the common extras: a true count at/above
+   the index means surrender. 15v10 is a basic surrender that you SKIP below TC 0; the others are extra
+   surrenders the count unlocks. Verified directionally against the combinatorial EV sim. */
+const SURR_DEV = { "15-10": 0, "14-10": 3, "15-9": 2, "16-8": 4 };
+function surrenderReco(cards, dUp, tcFloor, useDev) {
+  const basic = shouldSurrender(cards, dUp);
+  if (!useDev) return { sur: basic, dev: false, index: null };
+  const { total, soft } = handTotal(cards);
+  if (soft) return { sur: basic, dev: false, index: null };
+  const key = total + "-" + (dUp === 11 ? 11 : dUp);
+  if (SURR_DEV[key] !== undefined) { const index = SURR_DEV[key]; const sur = tcFloor >= index; return { sur, dev: sur !== basic, index, label: String(total) }; }
+  return { sur: basic, dev: false, index: null };
+}
 function getPlay(cards, dUp, canDouble, canSplit, tcFloor, useDev, canSurrender) {
-  if (canSurrender && shouldSurrender(cards, dUp)) return { move: "R", isDeviation: false, rec: null, basic: "R" };
-  const basic = basicOptimal(cards, dUp, canDouble, canSplit);
-  if (!useDev) return { move: basic, isDeviation: false, rec: null, basic };
+  const basicSur = canSurrender && shouldSurrender(cards, dUp);
+  const basicMove = basicSur ? "R" : basicOptimal(cards, dUp, canDouble, canSplit);
+  if (!useDev) return { move: basicMove, isDeviation: false, rec: null, basic: basicMove };
+  // 1) surrender deviations (take precedence — decided on the original two cards)
+  if (canSurrender) {
+    const sp = surrenderReco(cards, dUp, tcFloor, useDev);
+    if (sp.sur) { const rec = sp.dev ? { label: sp.label, index: sp.index, action: "R", basicAlt: basicMove, surrender: true } : null; return { move: "R", isDeviation: sp.dev, rec, basic: basicMove }; }
+    if (basicSur && !sp.sur) { // count says skip a basic surrender → play it out
+      const rec = { label: sp.label, index: sp.index, action: basicOptimal(cards, dUp, canDouble, canSplit), basicAlt: "R", surrender: true, skip: true };
+      let move = basicOptimal(cards, dUp, canDouble, canSplit);
+      return { move, isDeviation: true, rec, basic: basicMove };
+    }
+  }
+  // 2) play deviations (Illustrious 18)
   const rec = deviationFor(cards, dUp, canSplit);
-  if (!rec) return { move: basic, isDeviation: false, rec: null, basic };
+  if (!rec) return { move: basicMove, isDeviation: false, rec: null, basic: basicMove };
   let move = tcFloor >= rec.index ? rec.action : rec.basicAlt;
   if (move === "D" && !canDouble) move = "H";
   if (move === "P" && !canSplit) move = "S";
-  return { move, isDeviation: move !== basic, rec, basic };
+  return { move, isDeviation: move !== basicMove, rec, basic: basicMove };
 }
 function handDesc(cards) { if (splittable(cards)) { const v = cards[0].val; if (v === "A") return "A,A"; if (v === 10) return cards[0].rank + "," + cards[1].rank; return v + "," + v; } const t = handTotal(cards); return (t.soft ? "soft " : "") + t.total; }
 function totalStr(cards) { const t = handTotal(cards); if (t.total > 21) return "BUST"; return (t.soft && t.total < 21 ? "soft " : "") + t.total; }
@@ -135,9 +161,14 @@ function reasonFor(sc) {
 }
 function explainPlay(cards, dUp, correct, isDev, rec, tcFloor, canSplit) {
   const dStr = dUp === 11 ? "A" : String(dUp);
+  const { total } = handTotal(cards);
+  // count-based surrender (Fab 4): count either unlocks or cancels a surrender
+  if (rec && rec.surrender) {
+    if (rec.skip) return `${total} vs ${dStr}: basic strategy surrenders here, but at true count ${signed(rec.index)}+ the extra high cards left tip it back to playing on, so you ${MOVE[correct].label.toLowerCase()}. You're at TC ${signed(tcFloor)} → ${MOVE[correct].label}. (Fab 4 surrender index ${signed(rec.index)}.)`;
+    return `${total} vs ${dStr}: not a flat-bet surrender, but the shoe is ten-rich (TC ${signed(rec.index)}+), which makes you bust more and the dealer's stiff win more — so surrender is now the least-bad line. You're at TC ${signed(tcFloor)} → Surrender. (Fab 4 surrender index ${signed(rec.index)}.)`;
+  }
   if (correct === "R") {
-    const { total } = handTotal(cards);
-    return `Hard ${total} vs ${dStr}: this is a late-surrender spot. Even played perfectly you lose this hand more than half the time, so giving up half your bet beats playing on. (Surrender: hard 16 — never the 8,8 pair, always split that — vs 9/10/A, and hard 15 vs 10.)`;
+    return `Hard ${total} vs ${dStr}: a late-surrender spot. Even played perfectly you lose this hand well over half the time — 16 vs a 10 wins only ~23% — so giving up half (EV −0.50) beats both hitting (~−0.53) and standing (~−0.54). Basic surrenders: 15 vs 10; 16 (never the 8,8 pair) vs 9/10/A; and under H17 also 15 vs A, 17 vs A, and 8,8 vs A.`;
   }
   if (isDev && rec) {
     const above = tcFloor >= rec.index;
@@ -387,10 +418,15 @@ export default function App() {
         :root{color-scheme:dark;} *{box-sizing:border-box;}
         button:active{transform:translateY(1px);} button:disabled{cursor:not-allowed;}
         .mono{font-family:'IBM Plex Mono',monospace;}
+        /* Single-frame game layout: table on the left, coaching/results on the right on wide screens; stacked on phones. */
+        .game-grid{display:grid;grid-template-columns:1fr;gap:14px;align-items:start;}
+        @media(min-width:860px){.game-grid{grid-template-columns:minmax(360px,1.05fr) minmax(300px,0.95fr);}}
+        .game-side{position:sticky;top:76px;}
+        @media(max-width:859px){.game-side{position:static;}}
       `}</style>
 
       <header className="sticky top-0 z-20" style={{ background: C.panel, borderBottom: `1px solid ${C.border}` }}>
-        <div style={{ maxWidth: 720, margin: "0 auto" }} className="px-4 py-3">
+        <div style={{ maxWidth: 960, margin: "0 auto" }} className="px-4 py-3">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div>
               <div className="font-bold tracking-tight" style={{ fontSize: 18 }}><span style={{ color: C.gold }}>21</span> · Strategy &amp; Counting Trainer</div>
@@ -404,23 +440,23 @@ export default function App() {
         </div>
       </header>
 
-      <main style={{ maxWidth: 720, margin: "0 auto" }} className="px-4 py-4 pb-16">
+      <main style={{ maxWidth: 960, margin: "0 auto" }} className="px-4 py-4 pb-16">
 
         {/* ------------------------- LEARN ------------------------- */}
         {tab === "learn" && (
-          <div>
+          <div style={{ maxWidth: 700, margin: "0 auto" }}>
             <Section title="The whole game in 20 seconds">You and the dealer each try to get closer to <b>21</b> than the other without going over. Cards = face value, J/Q/K = 10, Ace = 11 <i>or</i> 1. You see both your cards and one dealer card. The dealer has <b>no choices</b> — hit until 17+ then stop. That fixed behavior is what makes the game solvable.</Section>
             <Section title="Your five moves"><Bullet c={C.hit} k="Hit">Take another card.</Bullet><Bullet c={C.stand} k="Stand">Stop and keep your total.</Bullet><Bullet c={C.double} k="Double">Double the bet, take <b>one</b> more card, stop.</Bullet><Bullet c={C.split} k="Split">Only with a pair — two hands, one bet each.</Bullet><Bullet c={C.surrender} k="Surrender">Give up half your bet and end the hand — only on your original two cards, before you've hit or split.</Bullet></Section>
             <Section title="The one idea behind the chart">Assume the dealer's hidden card is a 10 (a third of the deck is ten-value). Dealer showing <b>2–6</b> → likely to bust, so you stand on stiffs and press bets. Dealer showing <b>7–Ace</b> → likely 17+, so you hit your stiffs. The Chart tab shows the real bust rates.</Section>
             <Section title="Then learn to count">Basic strategy only makes you lose slowly (~0.5%). The edge comes from <b>counting</b>: track high vs low cards, bet more and deviate when the shoe is ten-rich. The Drill → <b>Full game</b> tab has a live running/true count and grades your count-based plays. Start there once the chart is automatic.</Section>
-            <Section title="Money rules"><div className="grid gap-1.5"><Rule><b>Never take insurance</b> unless you're counting and the true count is +3 or higher.</Rule><Rule>Only play <b>3:2</b> tables — 6:5 roughly triples the house edge.</Rule><Rule>Counting only pays with a <b>bet spread</b>; flat-betting a count just breaks even at best.</Rule><Rule><b>Surrender</b> only beats playing on in two spots: hard 16 (never the 8,8 pair — always split that) vs dealer 9/10/A, and hard 15 vs dealer 10.</Rule></div></Section>
-            <div className="rounded-lg p-3 mt-4 text-xs" style={{ background: C.panel2, border: `1px solid ${C.border}`, color: C.sub }}>Sources: basicstrategy.app · wizardofodds.com (basic strategy, Hi-Lo, Illustrious 18) · blackjackapprenticeship.com. Verify table rules before you sit.</div>
+            <Section title="Money rules"><div className="grid gap-1.5"><Rule><b>Never take insurance</b> unless you're counting and the true count is +3 or higher.</Rule><Rule>Only play <b>3:2</b> tables — 6:5 roughly triples the house edge.</Rule><Rule>Size your bet to the <b>count</b>, never to a win/loss streak — progression systems (Martingale, "chase your losses") don't change your EV by a cent; they just reshape variance until they hit the table limit.</Rule><Rule>Counting only pays with a <b>bet spread</b> over lots of hands; flat-betting a count just breaks even, and on a 6-deck shoe a short session is mostly variance.</Rule><Rule><b>Surrender</b> the hands you'd lose more than half the time played out: hard 16 (never the 8,8 pair) vs 9/10/A, and hard 15 vs 10 — plus, under H17, 15 vs A, 17 vs A, and 8,8 vs A.</Rule></div></Section>
+            <div className="rounded-lg p-3 mt-4 text-xs" style={{ background: C.panel2, border: `1px solid ${C.border}`, color: C.sub }}>Sources: Wizard of Odds (basic strategy, Hi-Lo, Illustrious 18) · Schlesinger, <i>Blackjack Attack</i> (Illustrious 18 &amp; Fab 4 surrender indices) · Griffin, <i>The Theory of Blackjack</i> · basicstrategy.app. EV figures verified with a 6-deck H17 combinatorial simulation. Verify table rules before you sit.</div>
           </div>
         )}
 
         {/* ------------------------- CHART ------------------------- */}
         {tab === "chart" && (
-          <div>
+          <div style={{ maxWidth: 720, margin: "0 auto" }}>
             <div className="text-sm mb-3" style={{ color: C.ink }}>Rows = your hand, columns = the dealer's up card. The chart is the optimal response to how often the dealer busts — here's that bust rate, the engine underneath every cell:</div>
             <DealerBustStrip />
             <div className="text-xs mb-4 rounded-lg p-3" style={{ background: C.panel, border: `1px solid ${C.border}`, color: C.sub }}>See the cliff: a <b style={{ color: C.split }}>6 busts ~44%</b>, a <b style={{ color: C.stand }}>7 only ~26%</b>. That 18-point drop is why most stand/hit decisions flip between the dealer's 6 and 7. <span>(6 decks, hits soft 17 — Wizard of Odds.)</span></div>
@@ -429,6 +465,7 @@ export default function App() {
             <ChartBlock title="Hard totals" rows={TABLES[ruleSet].hard} onCell={(l, d, ch) => setCellInfo({ label: l, dealer: d, correct: ch, catKey: "hard", isSoft: false, isPair: false })} />
             <ChartBlock title="Soft totals (ace as 11)" rows={TABLES[ruleSet].soft} onCell={(l, d, ch) => setCellInfo({ label: l, dealer: d, correct: ch, catKey: "soft", isSoft: true, isPair: false })} />
             <ChartBlock title="Pairs" rows={TABLES[ruleSet].pairs} onCell={(l, d, ch) => setCellInfo({ label: l, dealer: d, correct: ch, catKey: "pairs", isSoft: false, isPair: true })} />
+            <SurrenderChart />
             {cellInfo && (
               <div className="rounded-lg p-3" style={{ background: C.panel, border: `1px solid ${MOVE[cellInfo.correct].color}` }}>
                 <div className="flex items-center gap-2 mb-1"><span className="mono text-sm" style={{ color: C.ink }}>{cellInfo.label} vs {cellInfo.dealer}</span><span style={{ background: MOVE[cellInfo.correct].color, color: "#0a0e0c", fontWeight: 800, fontSize: 12, padding: "2px 8px", borderRadius: 5 }}>{MOVE[cellInfo.correct].label}</span><span className="text-xs" style={{ color: C.sub }}>· dealer busts {BUST[cellInfo.dealer]}%</span></div>
@@ -436,7 +473,7 @@ export default function App() {
               </div>
             )}
             <div className="rounded-lg p-3 mt-4 text-xs" style={{ background: C.panel2, border: `1px solid ${C.border}`, color: C.sub }}><b style={{ color: C.gold }}>American vs European:</b> under European No-Hole-Card the dealer draws only after you act, so you avoid doubling/splitting into a possible dealer blackjack — flipping five cells (11 vs 10/A, 8,8 vs 10/A, A,A vs A, and soft 18/19 doubles).</div>
-            <div className="rounded-lg p-3 mt-3 text-xs" style={{ background: C.panel2, border: `1px solid ${C.surrender}`, color: C.sub }}><b style={{ color: C.surrender }}>Surrender (if the table offers it):</b> beats every play above in exactly two spots — hard 16 (never the 8,8 pair) vs 9/10/A, and hard 15 vs 10. Not all tables offer it, so it's not printed on this chart — try it in Drill → Full game.</div>
+            <div className="rounded-lg p-3 mt-3 text-xs" style={{ background: C.panel2, border: `1px solid ${C.border}`, color: C.sub }}><b style={{ color: C.gold }}>Deviations:</b> the plain chart is <i>flat-bet</i> basic strategy. As the true count climbs, a handful of cells flip (the Illustrious 18) — e.g. 16 vs 10 stands from TC 0, 12 vs 3 stands from +2, and 15 vs 10 even <i>skips</i> surrender to stand at +0. Turn those on in Drill → Full game.</div>
           </div>
         )}
 
@@ -477,33 +514,32 @@ export default function App() {
             {drillMode === "game" && (
               <div>
                 <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-                  <div className="text-xs" style={{ color: C.sub }}>6 decks · dealer peeks &amp; hits soft 17 · 3:2 · Hi-Lo</div>
+                  <div className="text-xs" style={{ color: C.sub }}>6 decks · dealer peeks &amp; hits soft 17 · 3:2 · late surrender · Hi-Lo</div>
                   <button onClick={() => { setG(INIT_G); setAgg(INIT_AGG); setBalance(STARTING_BALANCE); }} style={{ padding: "4px 10px", borderRadius: 8, border: `1px solid ${C.border}`, background: "transparent", color: C.sub, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Reset</button>
                 </div>
 
-                <div className="rounded-xl p-3 mb-3 flex items-center justify-between flex-wrap gap-2" style={{ background: C.panel, border: `1px solid ${C.gold}` }}>
-                  <div>
-                    <div className="text-xs" style={{ color: C.sub }}>Balance</div>
-                    <div className="mono" style={{ color: balance >= STARTING_BALANCE ? C.split : balance <= 0 ? C.stand : C.ink, fontSize: 20, fontWeight: 700 }}>{fmtMoney(balance)}</div>
+                {/* ===== BANKROLL + BET SIZING (top, right above the game) ===== */}
+                <div className="rounded-xl p-3 mb-2" style={{ background: C.panel, border: `1px solid ${C.gold}` }}>
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div>
+                      <div className="text-xs" style={{ color: C.sub }}>Balance</div>
+                      <div className="mono" style={{ color: balance >= STARTING_BALANCE ? C.split : balance <= 0 ? C.stand : C.ink, fontSize: 22, fontWeight: 700, lineHeight: 1 }}>{fmtMoney(balance)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-right" style={{ color: C.sub }}>Chip</div>
+                      <div className="flex gap-1.5 mt-0.5">
+                        {CHIPS.map((c) => {
+                          const locked = g.phase === "player" || g.phase === "insurance";
+                          return <button key={c} disabled={locked} onClick={() => setChipSize(c)} style={{ padding: "7px 13px", borderRadius: 999, border: `1px solid ${chipSize === c ? C.gold : C.border}`, background: chipSize === c ? "rgba(232,182,76,.15)" : "transparent", color: chipSize === c ? C.gold : C.sub, fontWeight: 800, fontSize: 13, cursor: locked ? "not-allowed" : "pointer", opacity: locked ? 0.5 : 1 }}>${c}</button>;
+                        })}
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex gap-1.5">
-                    {CHIPS.map((c) => {
-                      const locked = g.phase === "player" || g.phase === "insurance";
-                      return <button key={c} disabled={locked} onClick={() => setChipSize(c)} style={{ padding: "7px 13px", borderRadius: 999, border: `1px solid ${chipSize === c ? C.gold : C.border}`, background: chipSize === c ? "rgba(232,182,76,.15)" : "transparent", color: chipSize === c ? C.gold : C.sub, fontWeight: 800, fontSize: 13, cursor: locked ? "not-allowed" : "pointer", opacity: locked ? 0.5 : 1 }}>${c}</button>;
-                    })}
+                  <div className="flex items-center justify-between mt-2 pt-2 flex-wrap gap-2" style={{ borderTop: `1px solid ${C.border}` }}>
+                    <span className="text-xs" style={{ color: C.sub }}>Next bet <b className="mono" style={{ color: C.gold }}>{fmtMoney(Math.min(betWithCount ? chipSize * suggestedUnits(tc) : chipSize, balance))}</b>{betWithCount ? <span style={{ opacity: .75 }}> · ramped to the count</span> : <span style={{ opacity: .75 }}> · flat</span>}</span>
+                    {toggle(betWithCount, setBetWithCount, "Bet with the count")}
                   </div>
                 </div>
-
-                {/* Counting 101 */}
-                <button onClick={() => setPrimer(!primer)} style={{ width: "100%", textAlign: "left", padding: "9px 12px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.panel2, color: C.gold, fontWeight: 700, fontSize: 13, cursor: "pointer", marginBottom: 8 }}>{primer ? "▾" : "▸"} Counting 101 — how the count works</button>
-                {primer && (
-                  <div className="rounded-lg p-3 mb-3 text-sm" style={{ background: C.panel, border: `1px solid ${C.border}`, color: C.ink }}>
-                    <p className="mb-2"><b style={{ color: C.gold }}>Hi-Lo tags:</b> low cards <b style={{ color: C.split }}>2–6 = +1</b>, neutral <b style={{ color: C.sub }}>7–9 = 0</b>, high cards <b style={{ color: C.stand }}>10–A = −1</b>. Add each card's tag as it's <i>shown</i> to get the <b>running count</b>. High cards left = good for you (more blackjacks, more dealer busts, better doubles).</p>
-                    <p className="mb-2"><b style={{ color: C.gold }}>True count = running count ÷ decks remaining.</b> A +6 running count means little with 5 decks left but a lot with 1 deck left. Divide to normalize. Each +1 of true count ≈ +0.5% to your edge — you're roughly break-even around TC +1 and actually ahead above it.</p>
-                    <p className="mb-1"><b style={{ color: C.gold }}>Then act on it:</b> bet more as the true count climbs, and make a few count-based plays (deviations). The cleanest: <b>take insurance at TC +3+</b>. This trainer only counts cards you'd really see — the dealer's hole card isn't counted until it's flipped.</p>
-                    <p className="text-xs" style={{ color: C.sub }}>Hi-Lo values and the +3 insurance / Illustrious-18 indices per Wizard of Odds &amp; Schlesinger's Blackjack Attack.</p>
-                  </div>
-                )}
 
                 {/* count panel */}
                 <div className="rounded-xl p-3 mb-2" style={{ background: C.panel, border: `1px solid ${C.double}` }}>
@@ -523,22 +559,12 @@ export default function App() {
                 <div className="flex flex-wrap gap-x-4 gap-y-1 mb-3 px-1">
                   {toggle(showTags, setShowTags, "Show ±count tags on cards")}
                   {toggle(hideCount, setHideCount, "Hide count (test me)")}
-                  {toggle(useDev, setUseDev, "Grade count deviations (I-18)")}
-                  {toggle(betWithCount, setBetWithCount, "Bet with the count")}
+                  {toggle(useDev, setUseDev, "Grade count deviations (I-18 + Fab 4)")}
                 </div>
 
-                {/* headline + stats */}
-                <div className="rounded-xl p-3 mb-2" style={{ background: C.panel, border: `1px solid ${C.gold}` }}>
-                  <div className="text-xs" style={{ color: C.sub }}>Hands you misplayed but still won</div>
-                  <div className="flex items-end gap-2"><span className="mono" style={{ color: C.gold, fontSize: 24, fontWeight: 700, lineHeight: 1 }}>{agg.flawedWon}/{agg.flawedHands}</span><span className="mono text-sm" style={{ color: C.sub, paddingBottom: 2 }}>{agg.flawedHands ? flawedRate + "% — variance covering mistakes" : "misplay a hand and see"}</span></div>
-                </div>
-                <div className="grid grid-cols-4 gap-2 mb-3">
-                  <Stat label="Strategy" value={`${gAcc}%`} sub={`${agg.decisions - agg.correct} miss`} color={C.split} />
-                  <Stat label="Count plays" value={agg.countDecisions ? `${cAcc}%` : "—"} sub={`${agg.countDecisions} calls`} color={C.double} />
-                  <Stat label="Net" value={fmtSigned(agg.net)} sub={`${agg.rounds} rds`} color={agg.net >= 0 ? C.split : C.stand} />
-                  <Stat label="Hands" value={`${agg.handsWon}-${agg.handsLost}-${agg.handsPush}`} sub="W-L-P" color={C.gold} />
-                </div>
-
+                {/* ===== SINGLE FRAME: table (left) + learning/results (right) ===== */}
+                <div className="game-grid">
+                <div>
                 {/* penetration */}
                 <div className="mb-3">
                   <div className="flex justify-between text-xs mb-1" style={{ color: C.sub }}><span>Shoe</span><span>{g.shoe.length ? g.shoe.length + " cards left" : "fresh 6-deck shoe"}</span></div>
@@ -589,8 +615,17 @@ export default function App() {
                 ) : (
                   <button onClick={dealNewRound} style={{ width: "100%", padding: "15px 0", borderRadius: 12, border: "none", cursor: "pointer", background: C.gold, color: "#0a0e0c", fontWeight: 800, fontSize: 15 }}>{g.phase === "idle" ? "Deal first hand" : "Deal next hand →"}</button>
                 )}
+                </div>
+
+                {/* ---- RIGHT COLUMN: learning + results ---- */}
+                <div className="game-side">
 
                 {/* coaching panel */}
+                {!g.coach && g.phase !== "done" && (
+                  <div className="rounded-lg p-3 mb-3" style={{ background: C.panel2, border: `1px dashed ${C.border}`, color: C.sub }}>
+                    <div className="text-sm">Make a move — the reasoning behind the correct play (basic strategy, a count deviation, or surrender) shows up here, on right calls too.</div>
+                  </div>
+                )}
                 {g.coach && (
                   <div className="rounded-lg p-3 mt-3" style={{ background: C.panel, border: `1px solid ${g.coach.ok ? C.split : C.stand}` }}>
                     <div className="flex items-center gap-2 mb-1">
@@ -620,7 +655,34 @@ export default function App() {
                   </div>
                 )}
 
-                <div className="text-xs mt-3" style={{ color: C.sub }}>Practice loop: keep the running count in your head as cards come out (tags on the cards help at first — hide them once you're quick), convert to true count by dividing by decks left, size your bet, and take the count-based plays. Turn on "Hide count" to test yourself, then "Reveal to check." Every wrong move shows why the correct play is correct — read it, don't just note the ✗.</div>
+                {/* session stats */}
+                <div className="rounded-xl p-3 mt-3 mb-2" style={{ background: C.panel, border: `1px solid ${C.gold}` }}>
+                  <div className="text-xs" style={{ color: C.sub }}>Hands you misplayed but still won</div>
+                  <div className="flex items-end gap-2"><span className="mono" style={{ color: C.gold, fontSize: 22, fontWeight: 700, lineHeight: 1 }}>{agg.flawedWon}/{agg.flawedHands}</span><span className="mono text-xs" style={{ color: C.sub, paddingBottom: 2 }}>{agg.flawedHands ? flawedRate + "% — variance covering mistakes" : "misplay and see"}</span></div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Stat label="Strategy" value={`${gAcc}%`} sub={`${agg.decisions - agg.correct} miss`} color={C.split} />
+                  <Stat label="Count plays" value={agg.countDecisions ? `${cAcc}%` : "—"} sub={`${agg.countDecisions} calls`} color={C.double} />
+                  <Stat label="Net" value={fmtSigned(agg.net)} sub={`${agg.rounds} rds`} color={agg.net >= 0 ? C.split : C.stand} />
+                  <Stat label="Hands" value={`${agg.handsWon}-${agg.handsLost}-${agg.handsPush}`} sub="W-L-P" color={C.gold} />
+                </div>
+
+                </div>{/* end right column */}
+                </div>{/* end game-grid */}
+
+                {/* Counting 101 primer (collapsible) */}
+                <button onClick={() => setPrimer(!primer)} style={{ width: "100%", textAlign: "left", padding: "9px 12px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.panel2, color: C.gold, fontWeight: 700, fontSize: 13, cursor: "pointer", marginTop: 14, marginBottom: 8 }}>{primer ? "▾" : "▸"} Counting 101 &amp; bet sizing — how it works and when it's worth it</button>
+                {primer && (
+                  <div className="rounded-lg p-3 mb-3 text-sm" style={{ background: C.panel, border: `1px solid ${C.border}`, color: C.ink }}>
+                    <p className="mb-2"><b style={{ color: C.gold }}>Hi-Lo tags:</b> low cards <b style={{ color: C.split }}>2–6 = +1</b>, neutral <b style={{ color: C.sub }}>7–9 = 0</b>, high cards <b style={{ color: C.stand }}>10–A = −1</b>. Add each tag as it's <i>shown</i> for the <b>running count</b>; high cards left over favor you (more blackjacks, more dealer busts, better doubles).</p>
+                    <p className="mb-2"><b style={{ color: C.gold }}>True count = running ÷ decks remaining.</b> Each +1 of true count ≈ +0.5% edge — you're roughly break-even near TC +1 and ahead above it. On this <b>6-deck</b> shoe the count only swings past +2 late in the shoe, so it's mostly a slow-burn edge: realistically a <b>1×–12× bet spread</b> over <b>tens of thousands</b> of hands to reliably beat the variance. Your skepticism is fair — for a casual player counting is a rounding error; its value shows up only in volume. Flat-betting a count barely breaks even.</p>
+                    <p className="mb-2"><b style={{ color: C.gold }}>Bet sizing that's real vs. fake.</b> <b style={{ color: C.split }}>Count-based</b> (bet ∝ your edge, à la Kelly) is the one signal that actually earns — that's the "bet with the count" toggle. <b style={{ color: C.stand }}>Win/loss streak</b> systems (Martingale, "raise after a loss," "press a hot streak") do <i>not</i> change your EV one cent: each round is independent, so a losing streak tells you nothing about the next hand. They only reshape the variance and eventually hit the table limit or your bankroll. Size to the <i>count</i>, never to the streak.</p>
+                    <p className="mb-1"><b style={{ color: C.gold }}>Then act on it:</b> the cleanest count plays are <b>insurance at TC +3+</b> and the Illustrious 18 / Fab 4 deviations. This trainer only counts cards you'd really see — the hole card isn't counted until it flips.</p>
+                    <p className="text-xs" style={{ color: C.sub }}>Hi-Lo values, +3 insurance, Illustrious 18 &amp; Fab 4 surrender indices per Wizard of Odds &amp; Schlesinger's <i>Blackjack Attack</i>. EV figures (e.g. 16 vs 10 loses ~77%) from a 6-deck H17 combinatorial simulation.</p>
+                  </div>
+                )}
+
+                <div className="text-xs mt-2" style={{ color: C.sub }}>Practice loop: keep the running count in your head as cards come out (tags help at first — hide them once you're quick), convert to true count by dividing by decks left, size your bet <i>to the count</i>, and take the count-based plays. Turn on "Hide count" to test yourself, then "Reveal to check." Every move shows why the correct play is correct — read it, don't just note the ✗.</div>
               </div>
             )}
           </div>
@@ -647,7 +709,7 @@ function DealerBustStrip() {
     </div>
   );
 }
-function Legend() { return <div className="flex flex-wrap gap-2 mb-3">{["H", "S", "D", "P"].map((k) => <span key={k} className="flex items-center gap-1.5 text-xs" style={{ color: C.sub }}><span style={{ width: 14, height: 14, borderRadius: 3, background: MOVE[k].color, display: "inline-block" }} />{MOVE[k].label}</span>)}</div>; }
+function Legend() { return <div className="flex flex-wrap gap-2 mb-3">{["H", "S", "D", "P", "R"].map((k) => <span key={k} className="flex items-center gap-1.5 text-xs" style={{ color: C.sub }}><span style={{ width: 14, height: 14, borderRadius: 3, background: MOVE[k].color, display: "inline-block" }} />{MOVE[k].label}</span>)}</div>; }
 function ChartBlock({ title, rows, onCell }) {
   return (
     <div className="mb-5">
@@ -658,6 +720,30 @@ function ChartBlock({ title, rows, onCell }) {
         <thead><tr><th></th>{DEALER.map((d) => <th key={d} className="text-xs" style={{ color: C.sub, fontWeight: 600 }}>{d}</th>)}</tr></thead>
         <tbody>{rows.map(([label, cells]) => <tr key={label}><td className="text-xs pr-1 text-right" style={{ color: C.ink, fontWeight: 600, fontSize: 11, lineHeight: 1.15 }}>{label}</td>{cells.split("").map((ch, i) => <td key={i}><button onClick={() => onCell(label, DEALER[i], ch)} style={{ width: "100%", aspectRatio: "1", borderRadius: 5, border: "none", cursor: "pointer", background: MOVE[ch].color, color: "#0a0e0c", fontWeight: 800, fontSize: 11 }}>{ch}</button></td>)}</tr>)}</tbody>
       </table>
+    </div>
+  );
+}
+/* Late-surrender cells, American 6-deck dealer-H17 (Wizard of Odds). R = surrender, · = play the hand.
+   Verified by combinatorial EV sim: each R cell has EV worse than -0.50 played out, so giving up half is best.
+   H17 adds 15 vs A, 17 vs A, and 8,8 vs A on top of the S17 set (15 vs 10; 16 vs 9/10/A). */
+const SURR_ROWS = [
+  ["15", "········RR"],
+  ["16 (not 8,8)", "·······RRR"],
+  ["17", "·········R"],
+  ["8,8 pair", "·········R"],
+];
+function SurrenderChart() {
+  return (
+    <div className="mb-4">
+      <div className="text-sm font-semibold mb-1.5" style={{ color: C.surrender }}>Late surrender — give up half the bet</div>
+      <table style={{ width: "100%", tableLayout: "fixed", borderCollapse: "separate", borderSpacing: 2 }}>
+        <colgroup><col style={{ width: "23%" }} />{DEALER.map((d) => <col key={d} style={{ width: "7.7%" }} />)}</colgroup>
+        <thead><tr><th></th>{DEALER.map((d) => <th key={d} className="text-xs" style={{ color: C.sub, fontWeight: 600 }}>{d}</th>)}</tr></thead>
+        <tbody>{SURR_ROWS.map(([label, cells]) => <tr key={label}><td className="text-xs pr-1 text-right" style={{ color: C.ink, fontWeight: 600, fontSize: 11, lineHeight: 1.1 }}>{label}</td>{cells.split("").map((ch, i) => <td key={i}><div style={{ width: "100%", aspectRatio: "1", borderRadius: 5, background: ch === "R" ? C.surrender : C.panel2, border: ch === "R" ? "none" : `1px solid ${C.border}`, color: "#0a0e0c", fontWeight: 800, fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center" }}>{ch === "R" ? "R" : ""}</div></td>)}</tr>)}</tbody>
+      </table>
+      <div className="text-xs mt-2 rounded-lg p-3" style={{ background: C.panel2, border: `1px solid ${C.surrender}`, color: C.sub }}>
+        Surrender is checked <b>first</b>, only on your original two cards. Take it and you forfeit exactly <b>half</b> your bet (EV −0.50). These cells are the hands you'd lose <i>more</i> than half the time no matter how you play them: <b style={{ color: C.ink }}>16 vs 10</b> wins only ~23% — you lose ~77% whether you hit (EV −0.53) or stand (−0.54), so bailing for −0.50 is the least-bad option. If your table has no surrender, play these as hard hits/stands from the chart above. <span style={{ opacity: .8 }}>(H17 6-deck; the last two rows — 17 vs A and 8,8 vs A — are H17-only.)</span>
+      </div>
     </div>
   );
 }
