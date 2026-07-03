@@ -12,9 +12,9 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 const C = {
   bg: "#0a0e0c", panel: "#111a16", panel2: "#0d1310", border: "#20302a",
   ink: "#e8efeb", sub: "#8aa79b", gold: "#e8b64c", felt: "#0e5a41", feltDark: "#093b2c",
-  hit: "#f59e0b", stand: "#fb5b6b", double: "#38bdf8", split: "#34d399",
+  hit: "#f59e0b", stand: "#fb5b6b", double: "#38bdf8", split: "#34d399", surrender: "#a78bfa",
 };
-const MOVE = { H: { label: "Hit", color: C.hit }, S: { label: "Stand", color: C.stand }, D: { label: "Double", color: C.double }, P: { label: "Split", color: C.split } };
+const MOVE = { H: { label: "Hit", color: C.hit }, S: { label: "Stand", color: C.stand }, D: { label: "Double", color: C.double }, P: { label: "Split", color: C.split }, R: { label: "Surrender", color: C.surrender } };
 const DEALER = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "A"];
 /* Dealer bust % by up card — 6-deck, dealer hits soft 17 (Wizard of Odds). */
 const BUST = { "2": 36, "3": 38, "4": 40, "5": 42, "6": 44, "7": 26, "8": 24, "9": 23, "10": 21, "A": 14 };
@@ -59,6 +59,15 @@ function basicOptimal(cards, dUp, canDouble, canSplit) {
   if (soft && total < 13) return "H";
   let L = AMH[hardKey(total)][i]; if (L === "D" && !canDouble) L = "H"; return L;
 }
+/* Late-surrender basic strategy (American, dealer peeks, H17, 6-deck). Checked before the H/S/D/P chart. */
+function shouldSurrender(cards, dUp) {
+  if (splittable(cards) && cards[0].val === 8) return false; // 8,8 always splits, never surrenders
+  const { total, soft } = handTotal(cards);
+  if (soft) return false;
+  if (total === 16 && (dUp === 9 || dUp === 10 || dUp === 11)) return true;
+  if (total === 15 && dUp === 10) return true;
+  return false;
+}
 /* Illustrious-18 deviations (Hi-Lo, 6-deck). Stand/double/split if TC >= index, else basicAlt. */
 function deviationFor(cards, dUp, canSplit) {
   const { total, soft } = handTotal(cards), pair = splittable(cards) && canSplit, tens = pair && cards[0].val === 10, two = cards.length === 2;
@@ -72,7 +81,8 @@ function deviationFor(cards, dUp, canSplit) {
   if (total === 9 && two) { if (dUp === 2) return { index: 1, action: "D", basicAlt: "H", label: "9" }; if (dUp === 7) return { index: 3, action: "D", basicAlt: "H", label: "9" }; return null; }
   return null;
 }
-function getPlay(cards, dUp, canDouble, canSplit, tcFloor, useDev) {
+function getPlay(cards, dUp, canDouble, canSplit, tcFloor, useDev, canSurrender) {
+  if (canSurrender && shouldSurrender(cards, dUp)) return { move: "R", isDeviation: false, rec: null, basic: "R" };
   const basic = basicOptimal(cards, dUp, canDouble, canSplit);
   if (!useDev) return { move: basic, isDeviation: false, rec: null, basic };
   const rec = deviationFor(cards, dUp, canSplit);
@@ -88,6 +98,8 @@ function buildShoe() { const s = []; for (let d = 0; d < 6; d++) for (const su o
 function drawFrom(cg) { if (cg.shoe.length === 0) cg.shoe = buildShoe(); return cg.shoe.pop(); }
 const edgePct = (tc) => 0.5 * tc - 0.5;
 function suggestedUnits(tc) { const f = Math.floor(tc); if (f <= 1) return 1; if (f === 2) return 2; if (f === 3) return 4; if (f === 4) return 6; if (f === 5) return 8; return 12; }
+function fmtMoney(n) { const v = Math.round(n * 100) / 100; const s = Number.isInteger(v) ? v.toString() : v.toFixed(2); return "$" + s; }
+function fmtSigned(n) { const v = Math.round(n * 100) / 100; const sign = v > 0 ? "+" : v < 0 ? "-" : ""; const abs = Math.abs(v); const s = Number.isInteger(abs) ? abs.toString() : abs.toFixed(2); return sign + "$" + s; }
 
 /* --------- reason engine for basic-strategy plays --------- */
 function reasonFor(sc) {
@@ -123,6 +135,10 @@ function reasonFor(sc) {
 }
 function explainPlay(cards, dUp, correct, isDev, rec, tcFloor, canSplit) {
   const dStr = dUp === 11 ? "A" : String(dUp);
+  if (correct === "R") {
+    const { total } = handTotal(cards);
+    return `Hard ${total} vs ${dStr}: this is a late-surrender spot. Even played perfectly you lose this hand more than half the time, so giving up half your bet beats playing on. (Surrender: hard 16 — never the 8,8 pair, always split that — vs 9/10/A, and hard 15 vs 10.)`;
+  }
   if (isDev && rec) {
     const above = tcFloor >= rec.index;
     const dir = rec.action === "S" ? "stand — a ten-rich shoe means the dealer busts more on a stiff and you bust less" : rec.action === "D" ? "double — you'll draw a ten to a strong total far more often" : "split — each new hand becomes a likely 20 when tens are rich";
@@ -170,6 +186,8 @@ function buildScenario(ruleSet, cats) {
 const INIT_G = { phase: "idle", shoe: [], hands: [], dealer: [], log: [], dealerRevealed: false, active: 0, message: "", roundNet: 0, roundFlawedWon: 0, rc: 0, bet: 1, insNet: 0, coach: null, shuffled: false };
 const INIT_AGG = { rounds: 0, handsWon: 0, handsLost: 0, handsPush: 0, decisions: 0, correct: 0, flawedHands: 0, flawedWon: 0, net: 0, countDecisions: 0, countCorrect: 0 };
 const CUT = 60; // reshuffle when fewer than ~1.15 decks remain (≈80% penetration)
+const STARTING_BALANCE = 1000;
+const CHIPS = [5, 25, 100];
 
 export default function App() {
   const [tab, setTab] = useState("learn");
@@ -187,6 +205,8 @@ export default function App() {
   const [agg, setAgg] = useState(INIT_AGG);
   const [useDev, setUseDev] = useState(true);
   const [betWithCount, setBetWithCount] = useState(false);
+  const [balance, setBalance] = useState(STARTING_BALANCE);
+  const [chipSize, setChipSize] = useState(25);
   const [showTags, setShowTags] = useState(true);
   const [hideCount, setHideCount] = useState(false);
   const [reveal, setReveal] = useState(false);
@@ -258,11 +278,13 @@ export default function App() {
   }
 
   function dealNewRound() {
+    if (balance < chipSize) return;
     let shoe = g.shoe.length < CUT ? buildShoe() : [...g.shoe];
     const shuffled = g.shoe.length < CUT;
     const rc0 = shuffled ? 0 : g.rc;
     const tcBet = shoe.length ? rc0 / (shoe.length / 52) : 0;
-    const bet = betWithCount ? suggestedUnits(tcBet) : 1;
+    const baseBet = betWithCount ? chipSize * suggestedUnits(tcBet) : chipSize;
+    const bet = Math.min(baseBet, balance);
     const cg = { ...INIT_G, shoe, rc: rc0, bet, shuffled };
     const p0 = drawFrom(cg), du = drawFrom(cg), p1 = drawFrom(cg), dh = drawFrom(cg);
     cg.rc += tag(p0) + tag(p1) + tag(du);
@@ -272,7 +294,10 @@ export default function App() {
     if (baseVal(du) === 11) { cg.phase = "insurance"; setG(cg); return; }
     const S = finalizeOpening(cg);
     setG(cg);
-    if (S) setAgg((a) => ({ ...a, rounds: a.rounds + 1, handsWon: a.handsWon + S.won, handsLost: a.handsLost + S.lost, handsPush: a.handsPush + S.push, net: a.net + S.net }));
+    if (S) {
+      setAgg((a) => ({ ...a, rounds: a.rounds + 1, handsWon: a.handsWon + S.won, handsLost: a.handsLost + S.lost, handsPush: a.handsPush + S.push, net: a.net + S.net }));
+      setBalance((b) => Math.round((b + S.net) * 100) / 100);
+    }
   }
 
   function resolveInsurance(take) {
@@ -291,6 +316,7 @@ export default function App() {
       if (S) { na.rounds += 1; na.handsWon += S.won; na.handsLost += S.lost; na.handsPush += S.push; na.net += S.net; }
       return na;
     });
+    if (S) setBalance((b) => Math.round((b + S.net) * 100) / 100);
   }
 
   function playerAct(action) {
@@ -298,10 +324,12 @@ export default function App() {
     const cg = { ...g, shoe: [...g.shoe], dealer: [...g.dealer], log: [...g.log], hands: g.hands.map((h) => ({ ...h, cards: [...h.cards] })) };
     const idx = cg.active, h = cg.hands[idx], dUp = baseVal(cg.dealer[0]);
     const canDouble = h.cards.length === 2, canSplit = h.cards.length === 2 && splittable(h.cards) && cg.hands.length < 4 && !h.isSplitAce;
+    const canSurrender = h.cards.length === 2 && cg.hands.length === 1 && !h.isSplitAce;
     if (action === "P" && !canSplit) return;
     if (action === "D" && !canDouble) return;
+    if (action === "R" && !canSurrender) return;
     const mtc = Math.floor(cg.rc / (cg.shoe.length / 52));
-    const play = getPlay(h.cards, dUp, canDouble, canSplit, mtc, useDev);
+    const play = getPlay(h.cards, dUp, canDouble, canSplit, mtc, useDev, canSurrender);
     const ok = action === play.move;
     if (!ok) h.mistakes += 1;
     cg.coach = { ok, isDev: play.isDeviation, you: action, correct: play.move, text: explainPlay(h.cards, dUp, play.move, play.isDeviation, play.rec, mtc, canSplit) };
@@ -318,6 +346,14 @@ export default function App() {
       if (isA) { A.cards.push(drawV()); A.done = true; cg.hands.splice(idx, 1, A, B); S = advance(cg); }
       else { A.cards.push(drawV()); cg.hands.splice(idx, 1, A, B); cg.active = idx; }
     }
+    else if (action === "R") {
+      h.surrendered = true; h.done = true; h.result = "surrender";
+      cg.dealerRevealed = false;
+      cg.roundNet = -(h.bet / 2);
+      cg.message = "Surrendered — half your bet back.";
+      cg.phase = "done";
+      S = { won: 0, lost: 1, push: 0, flawed: h.mistakes > 0 ? 1 : 0, flawedWon: 0, net: cg.roundNet };
+    }
     setG(cg);
     setAgg((a) => {
       const na = { ...a, decisions: a.decisions + 1, correct: a.correct + (ok ? 1 : 0) };
@@ -325,6 +361,7 @@ export default function App() {
       if (S) { na.rounds += 1; na.handsWon += S.won; na.handsLost += S.lost; na.handsPush += S.push; na.flawedHands += S.flawed; na.flawedWon += S.flawedWon; na.net += S.net; }
       return na;
     });
+    if (S) setBalance((b) => Math.round((b + S.net) * 100) / 100);
   }
 
   const acc = stats.total ? Math.round((stats.correct / stats.total) * 100) : 0;
@@ -341,6 +378,7 @@ export default function App() {
   const gCanDouble = g.phase === "player" && gActive && gActive.cards.length === 2;
   const gCanSplit = g.phase === "player" && gActive && gActive.cards.length === 2 && splittable(gActive.cards) && g.hands.length < 4 && !gActive.isSplitAce;
   const gCanHit = g.phase === "player" && gActive && handTotal(gActive.cards).total <= 21;
+  const gCanSurrender = g.phase === "player" && gActive && gActive.cards.length === 2 && g.hands.length === 1 && !gActive.isSplitAce;
 
   return (
     <div style={{ minHeight: "100vh", background: C.bg, color: C.ink, fontFamily: "'Space Grotesk',system-ui,sans-serif" }}>
@@ -372,10 +410,10 @@ export default function App() {
         {tab === "learn" && (
           <div>
             <Section title="The whole game in 20 seconds">You and the dealer each try to get closer to <b>21</b> than the other without going over. Cards = face value, J/Q/K = 10, Ace = 11 <i>or</i> 1. You see both your cards and one dealer card. The dealer has <b>no choices</b> — hit until 17+ then stop. That fixed behavior is what makes the game solvable.</Section>
-            <Section title="Your four moves"><Bullet c={C.hit} k="Hit">Take another card.</Bullet><Bullet c={C.stand} k="Stand">Stop and keep your total.</Bullet><Bullet c={C.double} k="Double">Double the bet, take <b>one</b> more card, stop.</Bullet><Bullet c={C.split} k="Split">Only with a pair — two hands, one bet each.</Bullet></Section>
+            <Section title="Your five moves"><Bullet c={C.hit} k="Hit">Take another card.</Bullet><Bullet c={C.stand} k="Stand">Stop and keep your total.</Bullet><Bullet c={C.double} k="Double">Double the bet, take <b>one</b> more card, stop.</Bullet><Bullet c={C.split} k="Split">Only with a pair — two hands, one bet each.</Bullet><Bullet c={C.surrender} k="Surrender">Give up half your bet and end the hand — only on your original two cards, before you've hit or split.</Bullet></Section>
             <Section title="The one idea behind the chart">Assume the dealer's hidden card is a 10 (a third of the deck is ten-value). Dealer showing <b>2–6</b> → likely to bust, so you stand on stiffs and press bets. Dealer showing <b>7–Ace</b> → likely 17+, so you hit your stiffs. The Chart tab shows the real bust rates.</Section>
             <Section title="Then learn to count">Basic strategy only makes you lose slowly (~0.5%). The edge comes from <b>counting</b>: track high vs low cards, bet more and deviate when the shoe is ten-rich. The Drill → <b>Full game</b> tab has a live running/true count and grades your count-based plays. Start there once the chart is automatic.</Section>
-            <Section title="Money rules"><div className="grid gap-1.5"><Rule><b>Never take insurance</b> unless you're counting and the true count is +3 or higher.</Rule><Rule>Only play <b>3:2</b> tables — 6:5 roughly triples the house edge.</Rule><Rule>Counting only pays with a <b>bet spread</b>; flat-betting a count just breaks even at best.</Rule></div></Section>
+            <Section title="Money rules"><div className="grid gap-1.5"><Rule><b>Never take insurance</b> unless you're counting and the true count is +3 or higher.</Rule><Rule>Only play <b>3:2</b> tables — 6:5 roughly triples the house edge.</Rule><Rule>Counting only pays with a <b>bet spread</b>; flat-betting a count just breaks even at best.</Rule><Rule><b>Surrender</b> only beats playing on in two spots: hard 16 (never the 8,8 pair — always split that) vs dealer 9/10/A, and hard 15 vs dealer 10.</Rule></div></Section>
             <div className="rounded-lg p-3 mt-4 text-xs" style={{ background: C.panel2, border: `1px solid ${C.border}`, color: C.sub }}>Sources: basicstrategy.app · wizardofodds.com (basic strategy, Hi-Lo, Illustrious 18) · blackjackapprenticeship.com. Verify table rules before you sit.</div>
           </div>
         )}
@@ -398,6 +436,7 @@ export default function App() {
               </div>
             )}
             <div className="rounded-lg p-3 mt-4 text-xs" style={{ background: C.panel2, border: `1px solid ${C.border}`, color: C.sub }}><b style={{ color: C.gold }}>American vs European:</b> under European No-Hole-Card the dealer draws only after you act, so you avoid doubling/splitting into a possible dealer blackjack — flipping five cells (11 vs 10/A, 8,8 vs 10/A, A,A vs A, and soft 18/19 doubles).</div>
+            <div className="rounded-lg p-3 mt-3 text-xs" style={{ background: C.panel2, border: `1px solid ${C.surrender}`, color: C.sub }}><b style={{ color: C.surrender }}>Surrender (if the table offers it):</b> beats every play above in exactly two spots — hard 16 (never the 8,8 pair) vs 9/10/A, and hard 15 vs 10. Not all tables offer it, so it's not printed on this chart — try it in Drill → Full game.</div>
           </div>
         )}
 
@@ -439,7 +478,20 @@ export default function App() {
               <div>
                 <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
                   <div className="text-xs" style={{ color: C.sub }}>6 decks · dealer peeks &amp; hits soft 17 · 3:2 · Hi-Lo</div>
-                  <button onClick={() => { setG(INIT_G); setAgg(INIT_AGG); }} style={{ padding: "4px 10px", borderRadius: 8, border: `1px solid ${C.border}`, background: "transparent", color: C.sub, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Reset</button>
+                  <button onClick={() => { setG(INIT_G); setAgg(INIT_AGG); setBalance(STARTING_BALANCE); }} style={{ padding: "4px 10px", borderRadius: 8, border: `1px solid ${C.border}`, background: "transparent", color: C.sub, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Reset</button>
+                </div>
+
+                <div className="rounded-xl p-3 mb-3 flex items-center justify-between flex-wrap gap-2" style={{ background: C.panel, border: `1px solid ${C.gold}` }}>
+                  <div>
+                    <div className="text-xs" style={{ color: C.sub }}>Balance</div>
+                    <div className="mono" style={{ color: balance >= STARTING_BALANCE ? C.split : balance <= 0 ? C.stand : C.ink, fontSize: 20, fontWeight: 700 }}>{fmtMoney(balance)}</div>
+                  </div>
+                  <div className="flex gap-1.5">
+                    {CHIPS.map((c) => {
+                      const locked = g.phase === "player" || g.phase === "insurance";
+                      return <button key={c} disabled={locked} onClick={() => setChipSize(c)} style={{ padding: "7px 13px", borderRadius: 999, border: `1px solid ${chipSize === c ? C.gold : C.border}`, background: chipSize === c ? "rgba(232,182,76,.15)" : "transparent", color: chipSize === c ? C.gold : C.sub, fontWeight: 800, fontSize: 13, cursor: locked ? "not-allowed" : "pointer", opacity: locked ? 0.5 : 1 }}>${c}</button>;
+                    })}
+                  </div>
                 </div>
 
                 {/* Counting 101 */}
@@ -463,7 +515,7 @@ export default function App() {
                     <MiniStat label="Est. edge" value={countVisible ? (g.shoe.length ? signed(Math.round(edgePct(tc) * 100) / 100) + "%" : "−0.5%") : "•••"} color={edgePct(tc) >= 0 ? C.split : C.stand} />
                   </div>
                   <div className="flex items-center justify-between mt-2 pt-2" style={{ borderTop: `1px solid ${C.border}` }}>
-                    <span className="text-xs" style={{ color: C.sub }}>Suggested bet at this count: <b className="mono" style={{ color: C.gold }}>{countVisible ? suggestedUnits(tc) + "u" : "•••"}</b> <span style={{ opacity: .7 }}>(1–12 spread)</span></span>
+                    <span className="text-xs" style={{ color: C.sub }}>Suggested bet at this count: <b className="mono" style={{ color: C.gold }}>{countVisible ? fmtMoney(chipSize * suggestedUnits(tc)) : "•••"}</b> <span style={{ opacity: .7 }}>(1×–12× your {fmtMoney(chipSize)} chip)</span></span>
                   </div>
                 </div>
 
@@ -483,7 +535,7 @@ export default function App() {
                 <div className="grid grid-cols-4 gap-2 mb-3">
                   <Stat label="Strategy" value={`${gAcc}%`} sub={`${agg.decisions - agg.correct} miss`} color={C.split} />
                   <Stat label="Count plays" value={agg.countDecisions ? `${cAcc}%` : "—"} sub={`${agg.countDecisions} calls`} color={C.double} />
-                  <Stat label="Net" value={(agg.net >= 0 ? "+" : "") + (Math.round(agg.net * 10) / 10)} sub={`${agg.rounds} rds`} color={agg.net >= 0 ? C.split : C.stand} />
+                  <Stat label="Net" value={fmtSigned(agg.net)} sub={`${agg.rounds} rds`} color={agg.net >= 0 ? C.split : C.stand} />
                   <Stat label="Hands" value={`${agg.handsWon}-${agg.handsLost}-${agg.handsPush}`} sub="W-L-P" color={C.gold} />
                 </div>
 
@@ -500,13 +552,13 @@ export default function App() {
                     {g.dealer.length === 0 ? <span className="text-xs" style={{ color: "rgba(255,255,255,.5)" }}>—</span> :
                       g.dealerRevealed ? g.dealer.map((c, i) => <PlayingCard key={i} card={c} small tagVal={showTags ? tag(c) : null} />) : <><PlayingCard card={g.dealer[0]} small tagVal={showTags ? tag(g.dealer[0]) : null} /><PlayingCard hidden small /></>}
                   </div>
-                  <div className="text-xs mb-1" style={{ color: "rgba(255,255,255,.6)" }}>You{g.hands.length > 1 ? ` · ${g.hands.length} hands` : ""}{g.bet !== 1 && g.phase !== "idle" ? ` · bet ${g.bet}u` : ""}</div>
+                  <div className="text-xs mb-1" style={{ color: "rgba(255,255,255,.6)" }}>You{g.hands.length > 1 ? ` · ${g.hands.length} hands` : ""}</div>
                   <div className="flex gap-3" style={{ flexWrap: "wrap" }}>
                     {g.hands.length === 0 ? <span className="text-xs" style={{ color: "rgba(255,255,255,.5)" }}>Press Deal to start</span> :
-                      g.hands.map((h, hi) => { const isActive = g.phase === "player" && hi === g.active; const rc = h.result === "win" ? C.split : h.result === "lose" ? C.stand : h.result === "push" ? C.gold : "transparent"; return (
+                      g.hands.map((h, hi) => { const isActive = g.phase === "player" && hi === g.active; const rc = h.result === "win" ? C.split : h.result === "lose" ? C.stand : h.result === "push" ? C.gold : h.result === "surrender" ? C.surrender : "transparent"; return (
                         <div key={hi} style={{ padding: 6, borderRadius: 10, outline: isActive ? `2px solid ${C.gold}` : h.result ? `2px solid ${rc}` : "2px solid transparent", outlineOffset: 1 }}>
                           <div className="flex gap-1.5">{h.cards.map((c, i) => <PlayingCard key={i} card={c} small tagVal={showTags ? tag(c) : null} />)}</div>
-                          <div className="flex items-center gap-1.5 mt-1"><span className="mono text-xs" style={{ color: "#fff", fontWeight: 700 }}>{totalStr(h.cards)}</span>{h.doubled && <span className="text-xs" style={{ color: "rgba(255,255,255,.7)" }}>2x</span>}{h.result && <span style={{ background: rc, color: "#0a0e0c", fontWeight: 800, fontSize: 10, padding: "1px 6px", borderRadius: 4, textTransform: "uppercase" }}>{h.result}</span>}</div>
+                          <div className="flex items-center gap-1.5 mt-1"><span className="mono text-xs" style={{ color: "#fff", fontWeight: 700 }}>{totalStr(h.cards)}</span><span className="mono text-xs" style={{ color: "rgba(255,255,255,.55)" }}>{fmtMoney(h.bet)}</span>{h.doubled && <span className="text-xs" style={{ color: "rgba(255,255,255,.7)" }}>2x</span>}{h.result && <span style={{ background: rc, color: "#0a0e0c", fontWeight: 800, fontSize: 10, padding: "1px 6px", borderRadius: 4, textTransform: "uppercase" }}>{h.result}</span>}</div>
                         </div>); })}
                   </div>
                 </div>
@@ -521,8 +573,18 @@ export default function App() {
                     </div>
                   </div>
                 ) : g.phase === "player" ? (
-                  <div className="grid grid-cols-4 gap-2">
-                    {[["H", gCanHit], ["S", gCanHit], ["D", gCanDouble], ["P", gCanSplit]].map(([k, on]) => <button key={k} disabled={!on} onClick={() => playerAct(k)} style={{ padding: "14px 0", borderRadius: 12, fontWeight: 800, fontSize: 14, color: "#0a0e0c", background: MOVE[k].color, opacity: on ? 1 : 0.28, border: "none", cursor: on ? "pointer" : "not-allowed" }}>{MOVE[k].label}</button>)}
+                  <div>
+                    {gCanSurrender && (
+                      <button onClick={() => playerAct("R")} style={{ width: "100%", padding: "10px 0", borderRadius: 12, border: `1px solid ${C.surrender}`, cursor: "pointer", background: "transparent", color: C.surrender, fontWeight: 800, fontSize: 13, marginBottom: 8 }}>Surrender <span style={{ opacity: .75, fontWeight: 600 }}>— give up half your bet</span></button>
+                    )}
+                    <div className="grid grid-cols-4 gap-2">
+                      {[["H", gCanHit], ["S", gCanHit], ["D", gCanDouble], ["P", gCanSplit]].map(([k, on]) => <button key={k} disabled={!on} onClick={() => playerAct(k)} style={{ padding: "14px 0", borderRadius: 12, fontWeight: 800, fontSize: 14, color: "#0a0e0c", background: MOVE[k].color, opacity: on ? 1 : 0.28, border: "none", cursor: on ? "pointer" : "not-allowed" }}>{MOVE[k].label}</button>)}
+                    </div>
+                  </div>
+                ) : balance < chipSize ? (
+                  <div className="rounded-xl p-3" style={{ background: C.panel, border: `1px solid ${C.stand}` }}>
+                    <div className="text-sm mb-2" style={{ color: C.ink }}>Not enough balance for a {fmtMoney(chipSize)} bet. Pick a smaller chip above, or reset your bankroll.</div>
+                    <button onClick={() => setBalance(STARTING_BALANCE)} style={{ width: "100%", padding: "12px 0", borderRadius: 12, border: "none", cursor: "pointer", background: C.gold, color: "#0a0e0c", fontWeight: 800, fontSize: 14 }}>Reset bankroll to {fmtMoney(STARTING_BALANCE)}</button>
                   </div>
                 ) : (
                   <button onClick={dealNewRound} style={{ width: "100%", padding: "15px 0", borderRadius: 12, border: "none", cursor: "pointer", background: C.gold, color: "#0a0e0c", fontWeight: 800, fontSize: 15 }}>{g.phase === "idle" ? "Deal first hand" : "Deal next hand →"}</button>
@@ -543,7 +605,7 @@ export default function App() {
                 {/* round result */}
                 {g.phase === "done" && g.message && (
                   <div className="rounded-lg p-3 mt-3" style={{ background: C.panel2, border: `1px solid ${g.roundNet > 0 ? C.split : g.roundNet < 0 ? C.stand : C.border}` }}>
-                    <div className="flex items-center gap-2"><span className="text-sm" style={{ color: C.ink }}>{g.message}</span><span className="mono text-sm" style={{ color: g.roundNet > 0 ? C.split : g.roundNet < 0 ? C.stand : C.sub, fontWeight: 700 }}>{g.roundNet > 0 ? "+" : ""}{Math.round(g.roundNet * 10) / 10}u</span></div>
+                    <div className="flex items-center gap-2"><span className="text-sm" style={{ color: C.ink }}>{g.message}</span><span className="mono text-sm" style={{ color: g.roundNet > 0 ? C.split : g.roundNet < 0 ? C.stand : C.sub, fontWeight: 700 }}>{fmtSigned(g.roundNet)}</span></div>
                     {g.roundFlawedWon > 0 && <div className="text-xs mt-1" style={{ color: C.gold }}>You misplayed and still won — that's variance, not skill.</div>}
                   </div>
                 )}
@@ -590,17 +652,17 @@ function ChartBlock({ title, rows, onCell }) {
   return (
     <div className="mb-5">
       <div className="text-sm font-semibold mb-1.5" style={{ color: C.gold }}>{title}</div>
-      <div className="overflow-x-auto -mx-1 px-1">
-        <table style={{ borderCollapse: "separate", borderSpacing: 3 }}>
-          <thead><tr><th style={{ minWidth: 62 }}></th>{DEALER.map((d) => <th key={d} className="text-xs" style={{ color: C.sub, fontWeight: 600, width: 26 }}>{d}</th>)}</tr></thead>
-          <tbody>{rows.map(([label, cells]) => <tr key={label}><td className="text-xs pr-1 text-right" style={{ color: C.ink, whiteSpace: "nowrap", fontWeight: 600 }}>{label}</td>{cells.split("").map((ch, i) => <td key={i}><button onClick={() => onCell(label, DEALER[i], ch)} style={{ width: 26, height: 26, borderRadius: 5, border: "none", cursor: "pointer", background: MOVE[ch].color, color: "#0a0e0c", fontWeight: 800, fontSize: 12 }}>{ch}</button></td>)}</tr>)}</tbody>
-        </table>
-      </div>
+      {/* table-layout: fixed + % columns so every column stays on-screen on any phone width — no hidden horizontal scroll. */}
+      <table style={{ width: "100%", tableLayout: "fixed", borderCollapse: "separate", borderSpacing: 2 }}>
+        <colgroup><col style={{ width: "21%" }} />{DEALER.map((d) => <col key={d} style={{ width: "7.9%" }} />)}</colgroup>
+        <thead><tr><th></th>{DEALER.map((d) => <th key={d} className="text-xs" style={{ color: C.sub, fontWeight: 600 }}>{d}</th>)}</tr></thead>
+        <tbody>{rows.map(([label, cells]) => <tr key={label}><td className="text-xs pr-1 text-right" style={{ color: C.ink, fontWeight: 600, fontSize: 11, lineHeight: 1.15 }}>{label}</td>{cells.split("").map((ch, i) => <td key={i}><button onClick={() => onCell(label, DEALER[i], ch)} style={{ width: "100%", aspectRatio: "1", borderRadius: 5, border: "none", cursor: "pointer", background: MOVE[ch].color, color: "#0a0e0c", fontWeight: 800, fontSize: 11 }}>{ch}</button></td>)}</tr>)}</tbody>
+      </table>
     </div>
   );
 }
 function Section({ title, children }) { return <div className="mb-5"><div className="font-semibold mb-1.5" style={{ color: C.gold, fontSize: 15 }}>{title}</div><div className="text-sm leading-relaxed" style={{ color: C.ink }}>{children}</div></div>; }
 function Bullet({ c, k, children }) { return <div className="flex items-start gap-2 mb-1.5"><span style={{ background: c, color: "#0a0e0c", fontWeight: 800, fontSize: 11, padding: "2px 8px", borderRadius: 5, whiteSpace: "nowrap", marginTop: 1 }}>{k}</span><span className="text-sm" style={{ color: C.ink }}>{children}</span></div>; }
 function Rule({ children }) { return <div className="flex items-start gap-2 text-sm" style={{ color: C.ink }}><span style={{ color: C.gold, marginTop: 1 }}>▸</span><span>{children}</span></div>; }
-function Stat({ label, value, sub, color }) { return <div className="rounded-xl p-2.5" style={{ background: C.panel, border: `1px solid ${C.border}` }}><div className="text-xs" style={{ color: C.sub }}>{label}</div><div className="mono" style={{ color, fontSize: 19, fontWeight: 700, lineHeight: 1.15 }}>{value}</div><div className="text-xs" style={{ color: C.sub }}>{sub}</div></div>; }
-function MiniStat({ label, value, color }) { return <div><div className="text-xs" style={{ color: C.sub }}>{label}</div><div className="mono" style={{ color, fontSize: 18, fontWeight: 700, lineHeight: 1.1 }}>{value}</div></div>; }
+function Stat({ label, value, sub, color }) { return <div className="rounded-xl p-2" style={{ background: C.panel, border: `1px solid ${C.border}`, minWidth: 0 }}><div className="text-xs" style={{ color: C.sub }}>{label}</div><div className="mono" style={{ color, fontSize: 14, fontWeight: 700, lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{value}</div><div className="text-xs" style={{ color: C.sub }}>{sub}</div></div>; }
+function MiniStat({ label, value, color }) { return <div style={{ minWidth: 0 }}><div className="text-xs" style={{ color: C.sub }}>{label}</div><div className="mono" style={{ color, fontSize: 15, fontWeight: 700, lineHeight: 1.1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{value}</div></div>; }

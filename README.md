@@ -25,11 +25,13 @@ An interactive trainer for **basic strategy** and **Hi-Lo card counting**, built
 
 - **Live Hi-Lo count** — running count, true count (running ÷ decks remaining), decks left, estimated edge, and a suggested bet spread, all updating card by card.
 - **Visibility-correct counting** — only cards a real player would see are counted. The dealer's hole card isn't counted until it's flipped; on rounds that end early (player blackjack, or all hands bust) it's never revealed or counted.
+- **Bankroll and bet sizing** — a real dollar balance and a $5 / $25 / $100 chip selector (locked once a hand is in progress), with per-hand bet amounts shown on the felt and a reset-bankroll option.
+- **Late surrender** — give up half your bet on your original two cards (before hitting or splitting), graded against the two spots where it beats playing on: hard 16 (never the 8,8 pair) vs 9/10/A, and hard 15 vs 10.
 - **Count-graded insurance** — when the dealer shows an Ace you make an actual insurance decision, graded against the true count (correct at TC ≥ +3, where the chance of a ten in the hole passes 1/3).
 - **Illustrious 18 deviations** — the core count-based strategy changes (e.g., 16 vs 10 stand at TC 0, 12 vs 3 at +2, 10,10 split at +5) are graded by the count, not just against basic strategy. Toggle off to drill pure basic strategy.
-- **Coaching on every move** — a panel explains the *why* behind the correct play (basic-strategy logic or the deviation logic), on correct plays too — learning, not just a verdict.
-- **Training aids** — show/hide the ± tags printed on each card, a hide-count "test me" mode with reveal-to-check, and an optional bet-with-the-count mode so net units reflect spreading.
-- **Variance meter** — tracks how often you misplay a hand and still win, plus strategy accuracy, count-play accuracy, net units, and W-L-P.
+- **Coaching on every move** — a panel explains the *why* behind the correct play (basic-strategy logic, the deviation logic, or the surrender logic), on correct plays too — learning, not just a verdict.
+- **Training aids** — show/hide the ± tags printed on each card, a hide-count "test me" mode with reveal-to-check, and an optional bet-with-the-count mode so bet sizing reflects spreading.
+- **Variance meter** — tracks how often you misplay a hand and still win, plus strategy accuracy, count-play accuracy, net $, and W-L-P.
 
 ---
 
@@ -73,11 +75,11 @@ That workflow (already enabled: **Settings → Pages → Build and deployment �
 
 ## Rules modeled &amp; validation
 
-The full-game engine runs standard American shoe rules: **6 decks, dealer peeks for blackjack, hits soft 17 (H17), blackjack pays 3:2, double allowed on any two cards, double after split (DAS), split to four hands, split aces get one card.** No surrender.
+The full-game engine runs standard American shoe rules: **6 decks, dealer peeks for blackjack, hits soft 17 (H17), blackjack pays 3:2, double allowed on any two cards, double after split (DAS), split to four hands, split aces get one card, late surrender** on the original two cards only.
 
 Sanity checks used while building:
 
-- A perfect-basic-strategy agent playing the engine over 400k hands returns roughly **−0.6% per round**, consistent with the known basic-strategy house edge for these rules — confirming dealer play, splits, doubles, and 3:2 payouts resolve correctly.
+- A perfect-basic-strategy agent playing the engine over 400k–2M hands returns roughly **−0.6% to −0.8% per round** (no surrender; surrender trims a further ~0.02%), consistent with the known basic-strategy house edge for these rules — confirming dealer play, splits, doubles, surrender, and 3:2 payouts resolve correctly. Any single session will swing far more than this on pure variance — the "misplayed hand, still won" meter in Drill exists to make that visible.
 - The Hi-Lo count sums to exactly **0** over a full 6-deck shoe (the balanced-count property), and tags are 2–6 = +1, 7–9 = 0, 10–A = −1.
 
 ---
