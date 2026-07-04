@@ -194,7 +194,49 @@ decoration.
 
 ---
 
-## 6. How these numbers were validated
+## 6. The Coach: per-action EV and variance
+
+The **Coach Me** table prices every legal action *before* you act. Where those numbers come from:
+
+**Method.** For each player state (hard 4–21, soft 12–21, every pair) against each dealer up-card,
+we compute the exact expected value of **Stand, Hit, Double, Split, and Surrender** by dynamic
+programming: build the dealer's final-total distribution (H17, with the peek — all values are
+conditioned on the dealer *not* having blackjack, which is the only situation in which you actually
+make a decision), then evaluate Stand directly, Hit as one card followed by optimal play, Double as
+one card at doubled stakes, and Split with the standard two-hand approximation (DAS allowed, split
+aces one card, no resplit). This is the same machinery behind every published basic-strategy table
+since **Baldwin, Cantey, Maisel & McDermott, "The Optimum Strategy in Blackjack,"
+*Journal of the American Statistical Association* 51 (1956)** — the first complete mathematical
+solution of the game — refined by **Thorp (*Beat the Dealer*, 1962)** and given its definitive
+treatment in **Griffin, *The Theory of Blackjack*** and **Werthamer, *Risk and Reward: The Science
+of Casino Blackjack* (Springer, 2nd ed. 2018)**. The infinite-deck computation matches 6-deck
+composition-dependent values to a few thousandths of a bet — smaller than any decision boundary the
+coach displays — and was cross-checked against our own 6-deck Monte-Carlo simulator (e.g. soft 18 vs 6
+double: DP +0.355 vs 3M-round MC +0.3557).
+
+**What the columns mean.**
+- **EV (¢/$1)** — expected win/loss per dollar of your *original* bet if you take that action and
+  play on perfectly. The coach's pick is simply the highest EV.
+- **Cost (−¢/$)** — how much EV you give up choosing that action instead of the coach's line. This is
+  the honest price of a "feel" play: standing on 16 vs 10 instead of hitting costs ~0.1¢; **not**
+  doubling 11 vs 6 costs ~10¢; splitting 10,10 vs 6 instead of standing costs ~20¢ per dollar.
+- **± swing (SD)** — the standard deviation of the action's outcome. A flat hand runs about
+  **±0.95–1.1 units**; a double, **~±1.9** (same decision EV, double the volatility); splits more;
+  surrender exactly **0**. Two actions can have nearly identical EV and very different variance —
+  16 vs 10's hit/stand is a near-tie in EV, but surrender removes *all* variance at a known −0.50.
+  Per-hand SD for the overall game is ≈1.15 units (Griffin; Schlesinger, *Blackjack Attack*), which
+  is why short sessions are noise (§3).
+- The **"EV you gave up" ledger** accumulates cost × your actual bet across the session — the expected
+  dollar price of every override. Over a long session it converges to what your deviations actually
+  cost you; in any short session, variance can pay you *despite* them (that's the trap).
+
+**Count overlay.** The EV table is flat-count (fresh-shoe composition). When the true count crosses an
+Illustrious-18 or Fab-4 index, the coach flags the flip (e.g. "count says Stand, TC +1, index 0") —
+the count shifts these EVs by roughly ½¢ per $1 per true-count point in the flagged cells.
+
+---
+
+## 7. How these numbers were validated
 
 - **House edge:** a perfect-basic-strategy agent playing the engine over 2M seeded rounds returns
   **−0.6% to −0.8% per round**, matching the known basic-strategy edge for 6-deck H17 DAS.
@@ -206,8 +248,15 @@ decoration.
 
 ## Sources
 
-- **Wizard of Odds** — basic strategy, dealer bust odds, Hi-Lo, and deviation indices.
-- **Don Schlesinger, *Blackjack Attack*** — the Illustrious 18, the Fab 4 surrender indices, and the
-  TC ≥ +3 insurance play.
-- **Peter Griffin, *The Theory of Blackjack*** — composition-dependent EV and counting theory.
+- **Baldwin, Cantey, Maisel & McDermott (1956)** — "The Optimum Strategy in Blackjack," *JASA* 51:
+  the founding academic paper; first complete basic strategy by expected-value analysis.
+- **Edward O. Thorp, *Beat the Dealer* (1962)** — card counting and the first winning system,
+  built on the Baldwin group's mathematics.
+- **Peter Griffin, *The Theory of Blackjack*** — composition-dependent EV, per-hand variance,
+  effects of removal; the standard theoretical reference.
+- **Don Schlesinger, *Blackjack Attack*** — the Illustrious 18, the Fab 4 surrender indices, the
+  TC ≥ +3 insurance play, N₀/SCORE and risk-adjusted betting.
+- **N. Richard Werthamer, *Risk and Reward: The Science of Casino Blackjack* (Springer, 2nd ed. 2018)** —
+  the modern academic monograph: optimal betting, variance, and risk formalized.
+- **Wizard of Odds** — basic strategy, dealer bust odds, Hi-Lo, and deviation indices (cross-check).
 - **basicstrategy.app** — American/European basic-strategy tables (cross-checked).
