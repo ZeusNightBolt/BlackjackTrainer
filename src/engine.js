@@ -148,7 +148,11 @@ export function resolveRound(cg) {
   if (live) {
     cg.dealerRevealed = true; cg.rc += tag(cg.dealer[1]);
     let guard = 0; while (guard++ < 20) { const { total, soft } = handTotal(cg.dealer); if (total < 17 || (RULES.h17 && total === 17 && soft)) { const c = drawFrom(cg); cg.rc += tag(c); cg.dealer.push(c); } else break; }
-  } else cg.dealerRevealed = false;
+  } else {
+    // every hand busted: real casinos still expose the hole card at settlement, so reveal and
+    // count it — but the dealer takes no draws (the felt shows the would-be draws as ghosts)
+    cg.dealerRevealed = true; cg.rc += tag(cg.dealer[1]);
+  }
   const dT = handTotal(cg.dealer).total, dBust = dT > 21;
   let won = 0, lost = 0, push = 0, flawed = 0, flawedWon = 0, net = 0;
   for (const h of cg.hands) {
@@ -161,8 +165,19 @@ export function resolveRound(cg) {
   }
   net += cg.insNet || 0;
   cg.phase = "done"; cg.roundNet = net; cg.roundFlawedWon = flawedWon;
-  cg.message = live ? (dBust ? "Dealer busts." : "Dealer stands on " + dT + ".") : "All hands busted — dealer doesn't draw.";
+  cg.message = live ? (dBust ? "Dealer busts." : "Dealer stands on " + dT + ".") : "All hands busted — dealer flips the hole card but doesn't draw.";
   return { won, lost, push, flawed, flawedWon, net };
+}
+
+/* What the dealer WOULD have done from here: completes the dealer's hand against a copy of the
+   shoe. Display-only — never touches the live shoe or the count (ghost cards on the felt). */
+export function ghostDealerPlayout(dealer, shoe) {
+  const s = [...shoe];
+  const cards = [...dealer];
+  const draw = () => (s.length ? s.pop() : makeCard(pick([2, 3, 4, 5, 6, 7, 8, 9, 10, "A"])));
+  let g = 0;
+  while (g++ < 20) { const { total, soft } = handTotal(cards); if (total < 17 || (RULES.h17 && total === 17 && soft)) cards.push(draw()); else break; }
+  return { draws: cards.slice(dealer.length), total: handTotal(cards).total };
 }
 export function advance(cg) {
   const next = cg.hands.findIndex((h) => !h.done);

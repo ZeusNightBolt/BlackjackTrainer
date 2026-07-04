@@ -6,7 +6,7 @@ import {
   makeCard, baseVal, tag, handTotal, splittable, handDesc, totalStr,
   softKey, hardKey, buildShoe, drawFrom,
   shouldSurrender, getPlay, edgePct, suggestedUnits, basicOptimal,
-  finalizeOpening, resolveRound, advance, coachAdvice, simulateAlternative,
+  finalizeOpening, resolveRound, advance, coachAdvice, simulateAlternative, ghostDealerPlayout,
 } from "./engine";
 
 /* ============================================================
@@ -80,11 +80,13 @@ function explainPlay(cards, dUp, correct, isDev, rec, tcFloor, canSplit) {
 }
 
 /* ------------------------------ Card UI ------------------------------ */
-/* anim: "deal" slides the card in off the shoe; "flip" turns the hole card over. */
-function PlayingCard({ card, hidden, small, tagVal, anim, delay = 0 }) {
+/* anim: "deal" slides the card in off the shoe; "flip" turns the hole card over.
+   ghost: a would-have-been card — dimmed, dashed, never tagged (it isn't in play and isn't counted). */
+function PlayingCard({ card, hidden, small, tagVal, anim, delay = 0, ghost }) {
   const w = small ? 42 : 56, h = small ? 60 : 80;
   const cls = anim === "deal" ? "card-deal" : anim === "flip" ? "card-flip" : "";
-  const style = { animationDelay: delay ? `${delay}ms` : undefined };
+  const style = { animationDelay: delay ? `${delay}ms` : undefined, ...(ghost ? { opacity: 0.55, outline: "2px dashed rgba(255,255,255,.45)", outlineOffset: 2 } : null) };
+  if (ghost) tagVal = null;
   if (hidden) return (
     <div className={cls} style={{ ...style, width: w, height: h, borderRadius: 8, border: "1px solid #2b4a63", padding: 3, background: "#16283a", boxShadow: "0 3px 8px rgba(0,0,0,.45)" }}>
       <div style={{ width: "100%", height: "100%", borderRadius: 5, border: "1px solid rgba(120,170,215,.4)", background: "repeating-linear-gradient(45deg,#122032,#122032 4px,#1b3a52 4px,#1b3a52 8px)" }} />
@@ -292,6 +294,10 @@ export default function App() {
   const gCanSplit = g.phase === "player" && gActive && gActive.cards.length === 2 && splittable(gActive.cards) && g.hands.length < 4 && !gActive.isSplitAce && gExposure + gActive.bet <= balance;
   const gCanHit = g.phase === "player" && gActive && handTotal(gActive.cards).total <= 21;
   const gCanSurrender = g.phase === "player" && gActive && gActive.cards.length === 2 && g.hands.length === 1 && !gActive.isSplitAce;
+  // ghost play-out: on all-bust or surrender, show what the dealer WOULD have done (display-only, never counted)
+  const gSurrHand = g.phase === "done" ? g.hands.find((h) => h.surrendered) : null;
+  const gAllBusted = g.phase === "done" && g.hands.length > 0 && !gSurrHand && g.hands.every((h) => handTotal(h.cards).total > 21);
+  const gGhost = g.phase === "done" && (gAllBusted || gSurrHand) && g.dealer.length >= 2 ? ghostDealerPlayout(g.dealer, g.shoe) : null;
 
   return (
     <div style={{ minHeight: "100vh", background: C.bg, color: C.ink, fontFamily: "'Space Grotesk',system-ui,sans-serif" }}>
@@ -492,13 +498,29 @@ export default function App() {
                 {/* felt */}
                 <div className={"rounded-2xl p-4 mb-3 felt" + (g.phase === "done" ? (g.roundNet > 0 ? " won" : g.roundNet < 0 ? " lost" : "") : "")}>
                   <div className="text-center mb-2" style={{ color: "rgba(255,255,255,.35)", fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" }}>{RULES.name} · {fmtMoney(RULES.tableMin)} min · 3:2</div>
-                  <div className="flex items-center gap-2 mb-1"><span className="text-xs" style={{ color: "rgba(255,255,255,.6)" }}>Dealer</span>{g.dealerRevealed && g.dealer.length > 0 && <span className="mono text-xs" style={{ color: handTotal(g.dealer).total > 21 ? "#ffd7d7" : "#fff", fontWeight: 700 }}>{totalStr(g.dealer)}</span>}</div>
-                  <div className="flex gap-2 mb-4" style={{ flexWrap: "wrap" }}>
+                  <div className="flex items-center gap-2 mb-1 flex-wrap"><span className="text-xs" style={{ color: "rgba(255,255,255,.6)" }}>Dealer</span>{g.dealerRevealed && g.dealer.length > 0 && <span className="mono text-xs" style={{ color: handTotal(g.dealer).total > 21 ? "#ffd7d7" : "#fff", fontWeight: 700 }}>{totalStr(g.dealer)}</span>}{gGhost && <span className="mono text-xs" style={{ color: "#ffe9a8", fontStyle: "italic" }}>→ would've {gGhost.total > 21 ? "BUSTED" : gGhost.draws.length ? "made " + gGhost.total : "stood on " + gGhost.total}</span>}</div>
+                  <div className="flex gap-2 mb-1" style={{ flexWrap: "wrap" }}>
                     {g.dealer.length === 0 ? <span className="text-xs" style={{ color: "rgba(255,255,255,.5)" }}>—</span> :
                       g.dealerRevealed
-                        ? g.dealer.map((c, i) => <PlayingCard key={i} card={c} small tagVal={showTags ? tag(c) : null} anim={i === 1 ? "flip" : i > 1 ? "deal" : undefined} delay={i > 1 ? (i - 1) * 340 : 0} />)
-                        : <><PlayingCard card={g.dealer[0]} small tagVal={showTags ? tag(g.dealer[0]) : null} anim="deal" /><PlayingCard hidden small anim="deal" delay={640} /></>}
+                        ? <>
+                            {g.dealer.map((c, i) => <PlayingCard key={i} card={c} small tagVal={showTags ? tag(c) : null} anim={i === 1 ? "flip" : i > 1 ? "deal" : undefined} delay={i > 1 ? (i - 1) * 340 : 0} />)}
+                            {gGhost && gGhost.draws.map((c, i) => <PlayingCard key={"g" + i} card={c} small ghost anim="deal" delay={500 + i * 340} />)}
+                          </>
+                        : gGhost
+                          ? <>
+                              <PlayingCard card={g.dealer[0]} small tagVal={showTags ? tag(g.dealer[0]) : null} />
+                              <PlayingCard card={g.dealer[1]} small ghost anim="flip" />
+                              {gGhost.draws.map((c, i) => <PlayingCard key={"g" + i} card={c} small ghost anim="deal" delay={500 + i * 340} />)}
+                            </>
+                          : <><PlayingCard card={g.dealer[0]} small tagVal={showTags ? tag(g.dealer[0]) : null} anim="deal" /><PlayingCard hidden small anim="deal" delay={640} /></>}
                   </div>
+                  <div className="mb-3">{gGhost && (
+                    <span className="text-xs" style={{ color: "rgba(255,255,255,.55)", fontStyle: "italic" }}>
+                      {gSurrHand ? "hole card + draws shown for training — not counted" : "would-be draws shown for training — not counted"}
+                      {gSurrHand && <> · standing pat, your {handTotal(gSurrHand.cards).total} would have <b style={{ color: gGhost.total > 21 || handTotal(gSurrHand.cards).total > gGhost.total ? "#7ce3b1" : handTotal(gSurrHand.cards).total === gGhost.total ? "#ffe9a8" : "#ffb3bd" }}>{gGhost.total > 21 || handTotal(gSurrHand.cards).total > gGhost.total ? "WON" : handTotal(gSurrHand.cards).total === gGhost.total ? "PUSHED" : "LOST"}</b></>}
+                      {gAllBusted && gGhost.total > 21 && <> · the dealer was going to bust — <b style={{ color: "#ffe9a8" }}>standing pat would have won</b></>}
+                    </span>
+                  )}</div>
                   <div className="text-xs mb-1" style={{ color: "rgba(255,255,255,.6)" }}>You{g.hands.length > 1 ? ` · ${g.hands.length} hands` : ""}</div>
                   <div className="flex gap-3" style={{ flexWrap: "wrap" }}>
                     {g.hands.length === 0 ? <span className="text-xs" style={{ color: "rgba(255,255,255,.5)" }}>Press Deal to start</span> :
@@ -740,6 +762,9 @@ function CoachTable({ balance, setBalance }) {
   const aCanSurr = cq.phase === "player" && active && active.cards.length === 2 && cq.hands.length === 1 && !active.isSplitAce;
   const adv = cq.phase === "player" && active ? coachAdvice(active.cards, dUp, aCanDouble, aCanSplit, aCanSurr) : [];
   const best = adv[0];
+  const cSurrHand = cq.phase === "done" ? cq.hands.find((h) => h.surrendered) : null;
+  const cAllBusted = cq.phase === "done" && cq.hands.length > 0 && !cSurrHand && cq.hands.every((h) => handTotal(h.cards).total > 21);
+  const cGhost = cq.phase === "done" && (cAllBusted || cSurrHand) && cq.dealer.length >= 2 ? ghostDealerPlayout(cq.dealer, cq.shoe) : null;
   const play = cq.phase === "player" && active ? getPlay(active.cards, dUp, aCanDouble, aCanSplit, tcFloor, true, aCanSurr) : null;
   const countFlip = best && play && play.move !== best.a;
   const followRate = cs.decisions ? Math.round((cs.followed / cs.decisions) * 100) : 0;
@@ -762,13 +787,29 @@ function CoachTable({ balance, setBalance }) {
         {/* felt */}
         <div className={"rounded-2xl p-4 mb-3 felt" + (cq.phase === "done" ? (cq.roundNet > 0 ? " won" : cq.roundNet < 0 ? " lost" : "") : "")}>
           <div className="text-center mb-2" style={{ color: "rgba(255,255,255,.35)", fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" }}>{RULES.name} · {fmtMoney(RULES.tableMin)} min · 3:2</div>
-          <div className="flex items-center gap-2 mb-1"><span className="text-xs" style={{ color: "rgba(255,255,255,.6)" }}>Dealer</span>{cq.dealerRevealed && cq.dealer.length > 0 && <span className="mono text-xs" style={{ color: "#fff", fontWeight: 700 }}>{totalStr(cq.dealer)}</span>}</div>
-          <div className="flex gap-2 mb-4" style={{ flexWrap: "wrap", minHeight: 62 }}>
+          <div className="flex items-center gap-2 mb-1 flex-wrap"><span className="text-xs" style={{ color: "rgba(255,255,255,.6)" }}>Dealer</span>{cq.dealerRevealed && cq.dealer.length > 0 && <span className="mono text-xs" style={{ color: "#fff", fontWeight: 700 }}>{totalStr(cq.dealer)}</span>}{cGhost && <span className="mono text-xs" style={{ color: "#ffe9a8", fontStyle: "italic" }}>→ would've {cGhost.total > 21 ? "BUSTED" : cGhost.draws.length ? "made " + cGhost.total : "stood on " + cGhost.total}</span>}</div>
+          <div className="flex gap-2 mb-1" style={{ flexWrap: "wrap", minHeight: 62 }}>
             {cq.dealer.length === 0 ? <span className="text-xs" style={{ color: "rgba(255,255,255,.5)" }}>—</span> :
               cq.dealerRevealed
-                ? cq.dealer.map((c, i) => <PlayingCard key={i} card={c} small anim={i === 1 ? "flip" : i > 1 ? "deal" : undefined} delay={i > 1 ? (i - 1) * 340 : 0} />)
-                : <><PlayingCard card={cq.dealer[0]} small anim="deal" /><PlayingCard hidden small anim="deal" delay={640} /></>}
+                ? <>
+                    {cq.dealer.map((c, i) => <PlayingCard key={i} card={c} small anim={i === 1 ? "flip" : i > 1 ? "deal" : undefined} delay={i > 1 ? (i - 1) * 340 : 0} />)}
+                    {cGhost && cGhost.draws.map((c, i) => <PlayingCard key={"g" + i} card={c} small ghost anim="deal" delay={500 + i * 340} />)}
+                  </>
+                : cGhost
+                  ? <>
+                      <PlayingCard card={cq.dealer[0]} small />
+                      <PlayingCard card={cq.dealer[1]} small ghost anim="flip" />
+                      {cGhost.draws.map((c, i) => <PlayingCard key={"g" + i} card={c} small ghost anim="deal" delay={500 + i * 340} />)}
+                    </>
+                  : <><PlayingCard card={cq.dealer[0]} small anim="deal" /><PlayingCard hidden small anim="deal" delay={640} /></>}
           </div>
+          <div className="mb-3">{cGhost && (
+            <span className="text-xs" style={{ color: "rgba(255,255,255,.55)", fontStyle: "italic" }}>
+              {cSurrHand ? "hole card + draws shown for training — not counted" : "would-be draws shown for training — not counted"}
+              {cSurrHand && <> · standing pat, your {handTotal(cSurrHand.cards).total} would have <b style={{ color: cGhost.total > 21 || handTotal(cSurrHand.cards).total > cGhost.total ? "#7ce3b1" : handTotal(cSurrHand.cards).total === cGhost.total ? "#ffe9a8" : "#ffb3bd" }}>{cGhost.total > 21 || handTotal(cSurrHand.cards).total > cGhost.total ? "WON" : handTotal(cSurrHand.cards).total === cGhost.total ? "PUSHED" : "LOST"}</b></>}
+              {cAllBusted && cGhost.total > 21 && <> · the dealer was going to bust — <b style={{ color: "#ffe9a8" }}>standing pat would have won</b></>}
+            </span>
+          )}</div>
           <div className="text-xs mb-1" style={{ color: "rgba(255,255,255,.6)" }}>You{cq.hands.length > 1 ? ` · ${cq.hands.length} hands` : ""}</div>
           <div className="flex gap-3 items-start" style={{ flexWrap: "wrap", minHeight: 70 }}>
             {cq.hands.length === 0 ? (
