@@ -192,6 +192,36 @@ deliberately does **not** offer a win/loss progression, because modeling a fake 
 mis-educating you. If your bet decision uses anything other than the count and your bankroll, it's
 decoration.
 
+### The coach's bet-discipline monitor
+
+Coach Me watches your actual bet sizes hand over hand and coaches the *behavioral* side of betting,
+which is where real players lose the most money. What it checks, and the research behind each check:
+
+- **Sizing vs. the count (Kelly).** The only positive-EV sizing rule is bet ∝ advantage —
+  **Kelly (1956)**, applied to blackjack by **Thorp** and formalized for shoe games in
+  **Schlesinger's *Blackjack Attack*** and **Werthamer (2018)**. The coach compares each bet to a
+  Kelly-style ramp off your smallest ("base") bet and the current true count, and tells you to
+  **scale up** when TC ≥ +2 and you're under-betting the edge, or **scale down** when TC ≤ +1 and
+  you're over-betting a negative-EV shoe. "Bet discipline" in the ledger is the share of your bets
+  that landed near that ramp.
+- **Loss-chasing (raising after a loss).** Martingale-style escalation is flagged in red the moment
+  it happens. Two independent literatures converge here: mathematically, rounds are independent, so
+  a raise after a loss changes nothing but your ruin risk (the gambler's-fallacy error —
+  **Tversky & Kahneman**); behaviorally, **loss-chasing is the single most consistent marker of
+  disordered gambling** in the clinical literature (it is a diagnostic criterion in the DSM, and
+  the core behavioral signal in studies of within-session betting such as O'Connor & Dickerson,
+  *Journal of Gambling Studies*). A trainer that stayed quiet while you Martingaled would be
+  training the tilt in.
+- **Win-pressing (the house-money effect).** Over-raising after wins gets a gentler flag: **Thaler &
+  Johnson (1990, *Management Science*)** showed people take gambles with "house money" they'd
+  refuse with their own — recent winnings feel free, so they get over-bet. The count doesn't care
+  whose money it is.
+- **Pre-commitment.** The advice line always pushes the same evidence-backed habit: decide the ramp
+  **before** the session and let the count execute it. Pre-committed rules beat in-the-moment
+  judgment under arousal — the implementation-intentions result (**Gollwitzer 1999**) and the basis
+  of pre-commitment tools throughout the responsible-gambling literature. Emotion sizes bets to the
+  last hand; discipline sizes them to the shoe.
+
 ---
 
 ## 6. The Coach: per-action EV and variance
