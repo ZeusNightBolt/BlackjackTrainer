@@ -124,7 +124,7 @@ export const edgePct = (tc) => 0.5 * tc - 0.5;
 export function suggestedUnits(tc) { const f = Math.floor(tc); if (f <= 1) return 1; if (f === 2) return 2; if (f === 3) return 4; if (f === 4) return 6; if (f === 5) return 8; return 12; }
 
 /* ------------------------------ round engine ------------------------------ */
-export const INIT_G = { phase: "idle", shoe: [], hands: [], dealer: [], log: [], dealerRevealed: false, active: 0, message: "", roundNet: 0, roundFlawedWon: 0, rc: 0, bet: 1, insNet: 0, coach: null, shuffled: false };
+export const INIT_G = { phase: "idle", shoe: [], hands: [], dealer: [], log: [], dealerRevealed: false, active: 0, message: "", roundNet: 0, roundFlawedWon: 0, rc: 0, bet: 1, insNet: 0, coach: null, shuffled: false, whatIf: null };
 export function finalizeOpening(cg) {
   const du = cg.dealer[0], dh = cg.dealer[1], dUp = baseVal(du);
   const peeks = RULES.peek && (dUp === 11 || dUp === 10);
@@ -170,6 +170,65 @@ export function advance(cg) {
   cg.active = next; const h = cg.hands[next];
   if (h.cards.length === 1) { const c = drawFrom(cg); cg.rc += tag(c); h.cards.push(c); if (h.isSplitAce) { h.done = true; return advance(cg); } }
   return null;
+}
+
+/* ------------------------------ counterfactual replay ------------------------------ */
+/* Replays a round from a first-decision snapshot with a forced first action, then flat basic
+   strategy, against the SAME shoe order the real round used — so "what if I'd hit instead?"
+   shows the exact cards that would have come off the shoe. Pure simulation: never touches the
+   live shoe or the running count (in a real game a surrendered hole card is burned unseen).
+   snapshot: { shoe: [...], player: [c0,c1], dealer: [up,hole], bet } */
+export function simulateAlternative(snap, action) {
+  const shoe = [...snap.shoe];
+  const draw = () => (shoe.length ? shoe.pop() : makeCard(pick([2, 3, 4, 5, 6, 7, 8, 9, 10, "A"])));
+  const dUp = baseVal(snap.dealer[0]);
+  const hands = [];
+  if (action === "R") return { action, hands: [{ cards: [...snap.player], bet: snap.bet }], dealer: snap.dealer.slice(0, 1), dealerRevealed: false, net: -snap.bet / 2, surrendered: true };
+  const mk = (cards, bet) => ({ cards, bet, done: false, fromSplitAce: false });
+  function playOut(h, firstAction, allowSplit) {
+    let forced = firstAction, guard = 0;
+    while (!h.done && guard++ < 12) {
+      if (handTotal(h.cards).total > 21) { h.done = true; break; }
+      const canDouble = h.cards.length === 2 && !h.fromSplitAce;
+      const canSplit = allowSplit && h.cards.length === 2 && splittable(h.cards) && hands.length < 2;
+      let a = forced || basicOptimal(h.cards, dUp, canDouble, canSplit);
+      forced = null;
+      if (a === "P" && canSplit) {
+        const [c0, c1] = h.cards, isA = c0.val === "A";
+        const A = mk([c0], h.bet), B = mk([c1], h.bet);
+        A.fromSplitAce = isA; B.fromSplitAce = isA;
+        A.cards.push(draw()); B.cards.push(draw());
+        if (isA) { A.done = true; B.done = true; }
+        hands.splice(hands.indexOf(h), 1, A, B);
+        if (!A.done) playOut(A, null, false);
+        if (!B.done) playOut(B, null, false);
+        return;
+      }
+      if (a === "P") a = "S"; // illegal split fallback
+      if (a === "D" && canDouble) { h.bet *= 2; h.cards.push(draw()); h.done = true; break; }
+      if (a === "D") a = "H";
+      if (a === "H") { h.cards.push(draw()); continue; }
+      h.done = true; // S / R-fallback
+    }
+  }
+  const h0 = mk([...snap.player], snap.bet);
+  hands.push(h0);
+  playOut(h0, action, true);
+  const dealer = [...snap.dealer];
+  const anyLive = hands.some((h) => handTotal(h.cards).total <= 21);
+  if (anyLive) {
+    let g = 0;
+    while (g++ < 20) { const { total, soft } = handTotal(dealer); if (total < 17 || (RULES.h17 && total === 17 && soft)) dealer.push(draw()); else break; }
+  }
+  const dT = handTotal(dealer).total;
+  let net = 0;
+  for (const h of hands) {
+    const pT = handTotal(h.cards).total;
+    if (pT > 21 || !anyLive) net -= h.bet;
+    else if (dT > 21 || pT > dT) net += h.bet;
+    else if (pT < dT) net -= h.bet;
+  }
+  return { action, hands, dealer: anyLive ? dealer : dealer.slice(0, 1), dealerRevealed: anyLive, net, dT: anyLive ? dT : null, surrendered: false };
 }
 
 /* ------------------------------ coach lookup ------------------------------ */

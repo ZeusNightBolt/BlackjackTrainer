@@ -5,8 +5,8 @@ import {
   rnd, pick, signed, fmtMoney, fmtSigned,
   makeCard, baseVal, tag, handTotal, splittable, handDesc, totalStr,
   softKey, hardKey, buildShoe, drawFrom,
-  shouldSurrender, getPlay, edgePct, suggestedUnits,
-  finalizeOpening, resolveRound, advance, coachAdvice,
+  shouldSurrender, getPlay, edgePct, suggestedUnits, basicOptimal,
+  finalizeOpening, resolveRound, advance, coachAdvice, simulateAlternative,
 } from "./engine";
 
 /* ============================================================
@@ -240,6 +240,10 @@ export default function App() {
     const play = getPlay(h.cards, dUp, canDouble, canSplit, mtc, useDev, canSurrender);
     const ok = action === play.move;
     if (!ok) h.mistakes += 1;
+    // snapshot the first decision so the round can be replayed with the alternatives afterwards
+    if (h.cards.length === 2 && cg.hands.length === 1 && !cg.whatIf) {
+      cg.whatIf = { shoe: [...cg.shoe], player: [...h.cards], dealer: [...cg.dealer], bet: h.bet, taken: action, correct: play.move, canSurrender };
+    }
     cg.coach = { ok, isDev: play.isDeviation, you: action, correct: play.move, text: explainPlay(h.cards, dUp, play.move, play.isDeviation, play.rec, mtc, canSplit) };
     cg.log.push({ hand: idx + 1, txt: handDesc(h.cards) + " vs " + cg.dealer[0].rank, you: action, want: play.move, ok, dev: play.isDeviation });
     let S = null;
@@ -303,13 +307,13 @@ export default function App() {
         .game-side{position:sticky;top:76px;}
         @media(max-width:859px){.game-side{position:static;}}
         /* --- motion --- */
-        @keyframes dealIn{from{opacity:0;transform:translateY(-14px) rotate(-4deg) scale(.92);}to{opacity:1;transform:none;}}
+        @keyframes dealIn{from{opacity:0;transform:translate(26px,-30px) rotate(-7deg) scale(.9);}55%{opacity:1;}to{opacity:1;transform:none;}}
         @keyframes flipIn{0%{transform:rotateY(88deg);opacity:.4;}100%{transform:rotateY(0);opacity:1;}}
         @keyframes popIn{0%{transform:scale(.4);opacity:0;}70%{transform:scale(1.12);}100%{transform:scale(1);opacity:1;}}
         @keyframes floatUp{0%{opacity:0;transform:translateY(4px);}18%{opacity:1;}100%{opacity:0;transform:translateY(-24px);}}
         @keyframes activePulse{0%,100%{outline-color:${C.gold};box-shadow:0 0 10px rgba(232,182,76,.18);}50%{outline-color:#f4cf7d;box-shadow:0 0 20px rgba(232,182,76,.5);}}
-        .card-deal{animation:dealIn .32s cubic-bezier(.2,.9,.3,1.2) both;}
-        .card-flip{animation:flipIn .4s ease-out both;}
+        .card-deal{animation:dealIn .62s cubic-bezier(.22,.85,.32,1.08) both;}
+        .card-flip{animation:flipIn .7s ease-out both;}
         .result-pop{animation:popIn .3s cubic-bezier(.2,.9,.3,1.4) both;}
         .delta-float{animation:floatUp 1.6s ease-out both;pointer-events:none;}
         .hand-active{animation:activePulse 1.5s ease-in-out infinite;}
@@ -403,9 +407,9 @@ export default function App() {
                 <div className="flex items-center justify-between mb-3 flex-wrap gap-2"><div className="flex gap-1.5">{catBtn("hard", "Hard")}{catBtn("soft", "Soft")}{catBtn("pairs", "Pairs")}</div>{toggle(auto, setAuto, "Auto-deal on correct")}</div>
                 <div key={`${stats.total}-${sc.label}-${sc.dealer}`} className="rounded-2xl p-4 mb-3 felt">
                   <div className="text-xs mb-1" style={{ color: "rgba(255,255,255,.6)" }}>Dealer</div>
-                  <div className="flex gap-2 mb-4"><PlayingCard card={sc.dealerCard} anim="deal" /><PlayingCard hidden anim="deal" delay={90} /></div>
+                  <div className="flex gap-2 mb-4"><PlayingCard card={sc.dealerCard} anim="deal" /><PlayingCard hidden anim="deal" delay={340} /></div>
                   <div className="text-xs mb-1" style={{ color: "rgba(255,255,255,.6)" }}>You</div>
-                  <div className="flex gap-2">{sc.cards.map((c, i) => <PlayingCard key={i} card={c} anim="deal" delay={140 + i * 90} />)}</div>
+                  <div className="flex gap-2">{sc.cards.map((c, i) => <PlayingCard key={i} card={c} anim="deal" delay={640 + i * 320} />)}</div>
                 </div>
                 <div className="grid gap-2" style={{ gridTemplateColumns: fcButtons.length === 4 ? "1fr 1fr" : "1fr 1fr 1fr" }}>
                   {fcButtons.map((k) => { const chosen = answered && answered.choice === k, right = answered && sc.correct === k; let ring = "transparent"; if (answered) { if (right) ring = C.split; else if (chosen) ring = C.stand; } return <button key={k} onClick={() => answer(k)} style={{ padding: "14px 0", borderRadius: 12, cursor: answered ? "default" : "pointer", fontWeight: 800, fontSize: 15, color: "#0a0e0c", background: MOVE[k].color, opacity: answered && !right && !chosen ? 0.4 : 1, outline: `3px solid ${ring}`, outlineOffset: 2, border: "none" }}>{MOVE[k].label}</button>; })}
@@ -492,15 +496,15 @@ export default function App() {
                   <div className="flex gap-2 mb-4" style={{ flexWrap: "wrap" }}>
                     {g.dealer.length === 0 ? <span className="text-xs" style={{ color: "rgba(255,255,255,.5)" }}>—</span> :
                       g.dealerRevealed
-                        ? g.dealer.map((c, i) => <PlayingCard key={i} card={c} small tagVal={showTags ? tag(c) : null} anim={i === 1 ? "flip" : i > 1 ? "deal" : undefined} delay={i > 1 ? (i - 1) * 140 : 0} />)
-                        : <><PlayingCard card={g.dealer[0]} small tagVal={showTags ? tag(g.dealer[0]) : null} anim="deal" /><PlayingCard hidden small anim="deal" delay={90} /></>}
+                        ? g.dealer.map((c, i) => <PlayingCard key={i} card={c} small tagVal={showTags ? tag(c) : null} anim={i === 1 ? "flip" : i > 1 ? "deal" : undefined} delay={i > 1 ? (i - 1) * 340 : 0} />)
+                        : <><PlayingCard card={g.dealer[0]} small tagVal={showTags ? tag(g.dealer[0]) : null} anim="deal" /><PlayingCard hidden small anim="deal" delay={640} /></>}
                   </div>
                   <div className="text-xs mb-1" style={{ color: "rgba(255,255,255,.6)" }}>You{g.hands.length > 1 ? ` · ${g.hands.length} hands` : ""}</div>
                   <div className="flex gap-3" style={{ flexWrap: "wrap" }}>
                     {g.hands.length === 0 ? <span className="text-xs" style={{ color: "rgba(255,255,255,.5)" }}>Press Deal to start</span> :
                       g.hands.map((h, hi) => { const isActive = g.phase === "player" && hi === g.active; const rc = h.result === "win" ? C.split : h.result === "lose" ? C.stand : h.result === "push" ? C.gold : h.result === "surrender" ? C.surrender : "transparent"; return (
                         <div key={hi} className={isActive ? "hand-active" : ""} style={{ padding: 6, borderRadius: 10, outline: isActive ? `2px solid ${C.gold}` : h.result ? `2px solid ${rc}` : "2px solid transparent", outlineOffset: 1 }}>
-                          <div className="flex gap-1.5">{h.cards.map((c, i) => <PlayingCard key={i} card={c} small tagVal={showTags ? tag(c) : null} anim="deal" delay={h.cards.length === 2 && i < 2 ? i * 90 : 0} />)}</div>
+                          <div className="flex gap-1.5">{h.cards.map((c, i) => <PlayingCard key={i} card={c} small tagVal={showTags ? tag(c) : null} anim="deal" delay={h.cards.length === 2 && i < 2 ? 160 + i * 320 : 0} />)}</div>
                           <div className="flex items-center gap-1.5 mt-1"><span className="mono text-xs" style={{ color: "#fff", fontWeight: 700 }}>{totalStr(h.cards)}</span><span className="mono text-xs" style={{ color: "rgba(255,255,255,.55)" }}>{fmtMoney(h.bet)}</span>{h.doubled && <span className="text-xs" style={{ color: "rgba(255,255,255,.7)" }}>2x</span>}{h.result && <span className="result-pop" style={{ background: rc, color: "#0a0e0c", fontWeight: 800, fontSize: 10, padding: "1px 6px", borderRadius: 4, textTransform: "uppercase" }}>{h.result}</span>}</div>
                         </div>); })}
                   </div>
@@ -563,6 +567,9 @@ export default function App() {
                     {g.roundFlawedWon > 0 && <div className="text-xs mt-1" style={{ color: C.gold }}>You misplayed and still won — that's variance, not skill.</div>}
                   </div>
                 )}
+
+                {/* counterfactual replay */}
+                {g.phase === "done" && <WhatIf snap={g.whatIf} actualNet={g.roundNet} />}
 
                 {/* move log */}
                 {g.log.length > 0 && (
@@ -696,6 +703,9 @@ function CoachTable({ balance, setBalance }) {
     if ((action === "P" && !canSplit) || (action === "D" && !canDouble) || (action === "R" && !canSurrender)) return;
     const adv = coachAdvice(h.cards, dUp, canDouble, canSplit, canSurrender);
     const best = adv[0], chosen = adv.find((x) => x.a === action);
+    if (h.cards.length === 2 && cg.hands.length === 1 && !cg.whatIf) {
+      cg.whatIf = { shoe: [...cg.shoe], player: [...h.cards], dealer: [...cg.dealer], bet: h.bet, taken: action, correct: best ? best.a : action, canSurrender };
+    }
     if (best && chosen) {
       const gave = Math.max(0, (best.ev - chosen.ev)) * h.bet;
       setCs((p) => ({ ...p, decisions: p.decisions + 1, followed: p.followed + (action === best.a ? 1 : 0), evGiven: p.evGiven + gave }));
@@ -756,8 +766,8 @@ function CoachTable({ balance, setBalance }) {
           <div className="flex gap-2 mb-4" style={{ flexWrap: "wrap", minHeight: 62 }}>
             {cq.dealer.length === 0 ? <span className="text-xs" style={{ color: "rgba(255,255,255,.5)" }}>—</span> :
               cq.dealerRevealed
-                ? cq.dealer.map((c, i) => <PlayingCard key={i} card={c} small anim={i === 1 ? "flip" : i > 1 ? "deal" : undefined} delay={i > 1 ? (i - 1) * 140 : 0} />)
-                : <><PlayingCard card={cq.dealer[0]} small anim="deal" /><PlayingCard hidden small anim="deal" delay={90} /></>}
+                ? cq.dealer.map((c, i) => <PlayingCard key={i} card={c} small anim={i === 1 ? "flip" : i > 1 ? "deal" : undefined} delay={i > 1 ? (i - 1) * 340 : 0} />)
+                : <><PlayingCard card={cq.dealer[0]} small anim="deal" /><PlayingCard hidden small anim="deal" delay={640} /></>}
           </div>
           <div className="text-xs mb-1" style={{ color: "rgba(255,255,255,.6)" }}>You{cq.hands.length > 1 ? ` · ${cq.hands.length} hands` : ""}</div>
           <div className="flex gap-3 items-start" style={{ flexWrap: "wrap", minHeight: 70 }}>
@@ -771,7 +781,7 @@ function CoachTable({ balance, setBalance }) {
             ) :
               cq.hands.map((h, hi) => { const isActive = cq.phase === "player" && hi === cq.active; const rc = h.result === "win" ? C.split : h.result === "lose" ? C.stand : h.result === "push" ? C.gold : h.result === "surrender" ? C.surrender : "transparent"; return (
                 <div key={hi} className={isActive ? "hand-active" : ""} style={{ padding: 6, borderRadius: 10, outline: isActive ? `2px solid ${C.gold}` : h.result ? `2px solid ${rc}` : "2px solid transparent", outlineOffset: 1 }}>
-                  <div className="flex gap-1.5">{h.cards.map((c, i) => <PlayingCard key={i} card={c} small anim="deal" delay={h.cards.length === 2 && i < 2 ? i * 90 : 0} />)}</div>
+                  <div className="flex gap-1.5">{h.cards.map((c, i) => <PlayingCard key={i} card={c} small anim="deal" delay={h.cards.length === 2 && i < 2 ? 160 + i * 320 : 0} />)}</div>
                   <div className="flex items-center gap-1.5 mt-1"><span className="mono text-xs" style={{ color: "#fff", fontWeight: 700 }}>{totalStr(h.cards)}</span><span className="mono text-xs" style={{ color: "rgba(255,255,255,.55)" }}>{fmtMoney(h.bet)}</span>{h.result && <span className="result-pop" style={{ background: rc, color: "#0a0e0c", fontWeight: 800, fontSize: 10, padding: "1px 6px", borderRadius: 4, textTransform: "uppercase" }}>{h.result}</span>}</div>
                 </div>); })}
           </div>
@@ -858,6 +868,7 @@ function CoachTable({ balance, setBalance }) {
 
       {/* right column: session ledger */}
       <div className="game-side">
+        {cq.phase === "done" && <div className="mb-3" style={{ marginTop: -12 }}><WhatIf snap={cq.whatIf} actualNet={cq.roundNet} /></div>}
         <div className="rounded-xl p-3 mb-2" style={{ background: C.panel, border: `1px solid ${C.gold}` }}>
           <div className="text-xs mb-1" style={{ color: C.sub }}>EV you gave up by overriding the coach</div>
           <div className="flex items-end gap-2"><span className="mono" style={{ color: cs.evGiven > 0 ? C.stand : C.split, fontSize: 22, fontWeight: 700, lineHeight: 1 }}>{fmtMoney(cs.evGiven)}</span><span className="text-xs" style={{ color: C.sub, paddingBottom: 2 }}>expected cost of off-chart moves</span></div>
@@ -885,6 +896,73 @@ function CoachTable({ balance, setBalance }) {
           <b style={{ color: C.gold }}>Where these numbers come from:</b> exact expected values for every action, computed by dynamic programming for these rules ({RULES.decks}-deck, dealer stands on all 17s, dealer peeks — conditioned on no dealer blackjack), the same method behind published basic-strategy tables since Baldwin et&nbsp;al. (1956) and Griffin's <i>Theory of Blackjack</i>. The ± swing is the standard deviation of each action's outcome — a typical hand runs ~±1.1&nbsp;units (Griffin/Schlesinger), doubles ~±1.9, splits more. "Costs ¢/$" is the EV you give up versus the coach's line; the count overlay flags Illustrious-18 / Fab-4 flips. Details in STRATEGY.md.
         </div>
       </div>
+      </div>
+    </div>
+  );
+}
+
+/* --------------------- "What if?" — counterfactual replay --------------------- */
+function MiniCard({ c }) { return <span className="mono" style={{ background: "#f4f4ec", color: c.red ? "#c62828" : "#1a1a1a", borderRadius: 3, padding: "0 3px", marginRight: 2, fontSize: 11, fontWeight: 700, display: "inline-block" }}>{c.rank}{c.suit}</span>; }
+function WhatIf({ snap, actualNet }) {
+  if (!snap) return null;
+  const dUp = baseVal(snap.dealer[0]);
+  const surrendered = snap.taken === "R";
+  let alts;
+  if (surrendered) alts = [basicOptimal(snap.player, dUp, true, splittable(snap.player))];
+  else {
+    alts = ["S", "H", "D"].filter((a) => a !== snap.taken);
+    if (splittable(snap.player) && snap.taken !== "P") alts.push("P");
+    if (snap.canSurrender) alts.push("R");
+  }
+  const sims = alts.map((a) => ({ a, r: simulateAlternative(snap, a) }));
+  const line = ({ a, r }) => {
+    if (r.surrendered) return <span style={{ color: C.sub }}>half back, hand over — guaranteed</span>;
+    const single = r.hands.length === 1;
+    const drawn = single ? r.hands[0].cards.slice(2) : [];
+    return (
+      <span style={{ color: C.sub }}>
+        {single && drawn.length > 0 && <>you'd draw {drawn.map((c, i) => <MiniCard key={i} c={c} />)}→ </>}
+        <b style={{ color: C.ink }}>{r.hands.map((h) => totalStr(h.cards)).join(" & ")}</b>
+        {" · "}
+        {r.dealerRevealed
+          ? <>dealer {r.dealer.slice(1).map((c, i) => <MiniCard key={i} c={c} />)}→ <b style={{ color: r.dT > 21 ? C.split : C.ink }}>{r.dT > 21 ? "BUST" : r.dT}</b></>
+          : <>dealer doesn't draw</>}
+      </span>
+    );
+  };
+  const anyBetter = sims.some(({ r }) => r.net > actualNet);
+  const tookCorrect = snap.taken === snap.correct;
+  return (
+    <div className="rounded-lg p-3 mt-3" style={{ background: C.panel, border: `1px solid ${C.gold}` }}>
+      <div className="text-xs mb-2" style={{ color: C.gold, fontWeight: 700 }}>
+        WHAT IF? <span style={{ color: C.sub, fontWeight: 400 }}>— same shoe, different first move ({handDesc(snap.player)} vs {snap.dealer[0].rank}{surrendered ? ", you surrendered" : `, you took ${MOVE[snap.taken].label}`})</span>
+      </div>
+      <div className="grid gap-1.5">
+        {sims.map(({ a, r }) => (
+          <div key={a} className="flex items-center gap-2 flex-wrap text-xs">
+            <span style={{ background: MOVE[a].color, color: "#0a0e0c", fontWeight: 800, fontSize: 10, padding: "1px 7px", borderRadius: 4, minWidth: 34, textAlign: "center" }}>{MOVE[a].label}</span>
+            {line({ a, r })}
+            <span className="mono" style={{ fontWeight: 700, color: r.net > 0 ? C.split : r.net < 0 ? C.stand : C.sub }}>{fmtSigned(r.net)}</span>
+            {r.net > actualNet && <span style={{ color: C.hit, fontSize: 10, fontWeight: 700 }}>would've paid more{a !== snap.correct ? " — but it's the wrong line" : ""}</span>}
+            {r.net < actualNet && <span style={{ color: C.split, fontSize: 10, fontWeight: 700 }}>your result beat it</span>}
+            {r.net === actualNet && <span style={{ color: C.sub, fontSize: 10 }}>same result</span>}
+          </div>
+        ))}
+      </div>
+      <div className="text-xs mt-2 pt-2" style={{ color: C.sub, borderTop: `1px solid ${C.border}` }}>
+        {surrendered
+          ? (snap.correct !== "R"
+            ? <>This wasn't a surrender spot — the chart line is <b style={{ color: MOVE[snap.correct].color }}>{MOVE[snap.correct].label}</b>{sims[0].r.net > actualNet ? <>, and this time it shows: playing on was worth <b style={{ color: C.stand }}>{fmtMoney(sims[0].r.net - actualNet)}</b> more</> : <> — the cards happened to forgive it this round, but the EV cost was real</>}.</>
+            : sims[0].r.net < actualNet
+              ? <>Surrender <b style={{ color: C.split }}>saved you {fmtMoney(actualNet - sims[0].r.net)}</b> this time — and it's the right call whenever playing on loses more than half on average.</>
+              : <>Right call, unlucky peek: playing on would have done <b style={{ color: C.hit }}>{fmtMoney(sims[0].r.net - actualNet)}</b> better this time — that's one draw of the cards. Surrender is judged on the average, not the anecdote.</>)
+          : tookCorrect && anyBetter
+            ? <>An alternative paid better <b>this time</b> — that's <b style={{ color: C.gold }}>variance, not strategy</b>. You made the right call; over thousands of these hands the chart line wins. Don't let one lucky draw retrain you.</>
+            : tookCorrect
+              ? <>Right call, best result — this is what the chart line looks like when it works. It won't always (that's variance), but it wins on average.</>
+              : anyBetter && sims.some(({ a, r }) => a === snap.correct && r.net > actualNet)
+                ? <>The chart line ({MOVE[snap.correct].label}) <b style={{ color: C.stand }}>would have cashed here</b> — the miss had a real price this round.</>
+                : <>Your off-chart move survived this round — <b style={{ color: C.gold }}>variance covering a mistake</b>. The EV cost was real even though the cards forgave it.</>}
       </div>
     </div>
   );
