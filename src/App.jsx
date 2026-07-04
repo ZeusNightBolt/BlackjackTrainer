@@ -404,7 +404,9 @@ export default function App() {
     if (g.phase !== "player") return;
     const cg = { ...g, shoe: [...g.shoe], dealer: [...g.dealer], log: [...g.log], hands: g.hands.map((h) => ({ ...h, cards: [...h.cards] })) };
     const idx = cg.active, h = cg.hands[idx], dUp = baseVal(cg.dealer[0]);
-    const canDouble = h.cards.length === 2, canSplit = h.cards.length === 2 && splittable(h.cards) && cg.hands.length < 4 && !h.isSplitAce;
+    const exposure = cg.hands.reduce((s, x) => s + x.bet, 0);
+    const canDouble = h.cards.length === 2 && exposure + h.bet <= balance;
+    const canSplit = h.cards.length === 2 && splittable(h.cards) && cg.hands.length < 4 && !h.isSplitAce && exposure + h.bet <= balance;
     const canSurrender = h.cards.length === 2 && cg.hands.length === 1 && !h.isSplitAce;
     if (action === "P" && !canSplit) return;
     if (action === "D" && !canDouble) return;
@@ -456,8 +458,9 @@ export default function App() {
   const toggle = (on, set, txt) => <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none" style={{ color: C.sub }}><input type="checkbox" checked={on} onChange={(e) => set(e.target.checked)} />{txt}</label>;
 
   const gActive = g.hands[g.active];
-  const gCanDouble = g.phase === "player" && gActive && gActive.cards.length === 2;
-  const gCanSplit = g.phase === "player" && gActive && gActive.cards.length === 2 && splittable(gActive.cards) && g.hands.length < 4 && !gActive.isSplitAce;
+  const gExposure = g.hands.reduce((s, x) => s + x.bet, 0);
+  const gCanDouble = g.phase === "player" && gActive && gActive.cards.length === 2 && gExposure + gActive.bet <= balance;
+  const gCanSplit = g.phase === "player" && gActive && gActive.cards.length === 2 && splittable(gActive.cards) && g.hands.length < 4 && !gActive.isSplitAce && gExposure + gActive.bet <= balance;
   const gCanHit = g.phase === "player" && gActive && handTotal(gActive.cards).total <= 21;
   const gCanSurrender = g.phase === "player" && gActive && gActive.cards.length === 2 && g.hands.length === 1 && !gActive.isSplitAce;
 
@@ -683,7 +686,7 @@ export default function App() {
                   <div className="rounded-xl p-3 mb-1" style={{ background: C.panel, border: `1px solid ${C.double}` }}>
                     <div className="text-sm mb-2" style={{ color: C.ink }}><b style={{ color: C.double }}>Dealer shows an Ace.</b> Take insurance? {countVisible ? <span className="mono" style={{ color: C.sub }}>(TC {signed(tcFloor)})</span> : <span style={{ color: C.sub }}>— you're testing, so decide from your own count</span>}</div>
                     <div className="grid grid-cols-2 gap-2">
-                      <button className="act-btn" onClick={() => resolveInsurance(true)} style={{ padding: "12px 0", borderRadius: 12, border: "none", cursor: "pointer", background: C.double, color: "#0a0e0c", fontWeight: 800, fontSize: 14 }}>Take insurance</button>
+                      <button className="act-btn" disabled={balance < g.bet * 1.5} onClick={() => resolveInsurance(true)} style={{ padding: "12px 0", borderRadius: 12, border: "none", cursor: balance >= g.bet * 1.5 ? "pointer" : "not-allowed", background: C.double, color: "#0a0e0c", fontWeight: 800, fontSize: 14, opacity: balance >= g.bet * 1.5 ? 1 : 0.4 }}>Take insurance</button>
                       <button className="act-btn" onClick={() => resolveInsurance(false)} style={{ padding: "12px 0", borderRadius: 12, border: `1px solid ${C.border}`, cursor: "pointer", background: "transparent", color: C.ink, fontWeight: 800, fontSize: 14 }}>No insurance</button>
                     </div>
                   </div>
@@ -791,24 +794,49 @@ export default function App() {
    suboptimal line and the volatility (SD) of the action's outcome.
    EV/SD from src/evdata.js (see STRATEGY.md §7 for method + literature). */
 const evc = (ev) => (ev >= 0 ? "+" : "−") + Math.abs(ev * 100).toFixed(1) + "¢";
+const COACH_LS = "bjt-coach-v1";
+function loadCoachSaved() { try { return JSON.parse(localStorage.getItem(COACH_LS)) || {}; } catch { return {}; } }
+const COACH_INIT_CS = { hands: 0, decisions: 0, followed: 0, evGiven: 0, bets: 0, aligned: 0, lossChases: 0, winPresses: 0, base: null, lastBet: null, lastNet: null };
 function CoachTable({ balance, setBalance }) {
   const [cq, setCq] = useState(INIT_G);
   const [betAmt, setBetAmt] = useState(0);
-  const [cs, setCs] = useState({ hands: 0, decisions: 0, followed: 0, evGiven: 0 });
+  const [cs, setCs] = useState(() => ({ ...COACH_INIT_CS, ...loadCoachSaved() }));
   const [clog, setClog] = useState([]);
   const [hideC, setHideC] = useState(false);
+  useEffect(() => { try { localStorage.setItem(COACH_LS, JSON.stringify(cs)); } catch {} }, [cs]);
 
   const decksRem = cq.shoe.length / 52;
   const tc = cq.shoe.length ? cq.rc / decksRem : 0;
   const tcFloor = Math.floor(tc);
 
+  /* --- bet-discipline monitor (see STRATEGY.md §5): the evidence-backed way to size bets is a
+     pre-committed count ramp (Kelly-fraction); reacting to streaks is loss-chasing / house-money. --- */
+  const baseUnit = cs.base || CHIPS[0];
+  const recBet = Math.min(baseUnit * suggestedUnits(tc), balance);
+  const lossChasing = cs.lastNet !== null && cs.lastNet < 0 && cs.lastBet !== null && betAmt > cs.lastBet;
+  const winPressing = cs.lastNet !== null && cs.lastNet > 0 && cs.lastBet !== null && betAmt > cs.lastBet && betAmt > recBet * 1.5;
+  function betVerdict() {
+    if (!betAmt) return null;
+    if (lossChasing) return { tone: C.stand, head: "Scale it back down.", text: `You lost the last hand and raised from ${fmtMoney(cs.lastBet)} to ${fmtMoney(betAmt)} — that's loss-chasing (a Martingale move). The shoe has no memory: raising after a loss doesn't change your odds by a cent, it only deepens the hole when the streak continues. Return to ~${fmtMoney(Math.min(baseUnit * suggestedUnits(tc), balance))} for TC ${signed(tcFloor)}.` };
+    if (winPressing) return { tone: C.hit, head: "Careful — that's house money talking.", text: `Raising past the count's ramp after a win is the "house-money effect": found money feels free, so people over-bet it. The count, not the last result, is the only signal — ~${fmtMoney(recBet)} is right for TC ${signed(tcFloor)}.` };
+    if (tcFloor >= 2 && betAmt < recBet * 0.6) return { tone: C.split, head: "Scale UP.", text: `TC ${signed(tcFloor)} — the shoe favors you (edge ≈ ${signed(Math.round(edgePct(tc) * 100) / 100)}%). This is exactly when a counter presses: ramp toward ${fmtMoney(recBet)} (~${suggestedUnits(tc)}× your base).` };
+    if (tcFloor <= 1 && betAmt > baseUnit * 2) return { tone: C.hit, head: "Scale DOWN.", text: `TC ${signed(tcFloor)} — no edge yet, so every extra dollar out is pure variance at −EV. Keep it near your base ${fmtMoney(baseUnit)} until the count climbs.` };
+    return { tone: C.split, head: "Good size.", text: `${fmtMoney(betAmt)} fits TC ${signed(tcFloor)} — betting the count, not the streak. That pre-committed ramp is the discipline that survives a real session.` };
+  }
   function settle(S) {
     if (!S) return;
-    setCs((p) => ({ ...p, hands: p.hands + 1 }));
+    setCs((p) => ({ ...p, hands: p.hands + 1, lastNet: S.net }));
     setBalance((b) => Math.round((b + S.net) * 100) / 100);
   }
   function dealCoach() {
     if (betAmt <= 0 || betAmt > balance) return;
+    // record bet-discipline stats at commit time
+    setCs((p) => {
+      const base = p.base ? Math.min(p.base, betAmt) : betAmt;
+      const rec = base * suggestedUnits(tc);
+      const aligned = betAmt >= rec / 2 && betAmt <= rec * 2;
+      return { ...p, bets: p.bets + 1, aligned: p.aligned + (aligned ? 1 : 0), lossChases: p.lossChases + (lossChasing ? 1 : 0), winPresses: p.winPresses + (winPressing ? 1 : 0), base, lastBet: betAmt };
+    });
     let shoe = cq.shoe.length < CUT ? buildShoe() : [...cq.shoe];
     const rc0 = cq.shoe.length < CUT ? 0 : cq.rc;
     const cg = { ...INIT_G, shoe, rc: rc0, bet: betAmt };
@@ -820,6 +848,8 @@ function CoachTable({ balance, setBalance }) {
     const S = finalizeOpening(cg);
     setCq(cg); settle(S);
   }
+  /* back to a blank table for a fresh bet — keeps the shoe and running count (real-table behavior) */
+  function newBet() { setCq((c) => ({ ...INIT_G, shoe: c.shoe, rc: c.rc })); }
   function coachInsurance(take) {
     if (cq.phase !== "insurance") return;
     const cg = { ...cq, shoe: [...cq.shoe], dealer: [...cq.dealer], hands: cq.hands.map((h) => ({ ...h, cards: [...h.cards] })) };
@@ -832,8 +862,10 @@ function CoachTable({ balance, setBalance }) {
     if (cq.phase !== "player") return;
     const cg = { ...cq, shoe: [...cq.shoe], dealer: [...cq.dealer], hands: cq.hands.map((h) => ({ ...h, cards: [...h.cards] })) };
     const idx = cg.active, h = cg.hands[idx], dUp = baseVal(cg.dealer[0]);
-    const canDouble = h.cards.length === 2 && balance >= h.bet;
-    const canSplit = h.cards.length === 2 && splittable(h.cards) && cg.hands.length < 4 && !h.isSplitAce && balance >= h.bet;
+    // funds guard: the balance must cover every bet already on the table PLUS the new one
+    const exposure = cg.hands.reduce((s, x) => s + x.bet, 0);
+    const canDouble = h.cards.length === 2 && exposure + h.bet <= balance;
+    const canSplit = h.cards.length === 2 && splittable(h.cards) && cg.hands.length < 4 && !h.isSplitAce && exposure + h.bet <= balance;
     const canSurrender = h.cards.length === 2 && cg.hands.length === 1 && !h.isSplitAce;
     if ((action === "P" && !canSplit) || (action === "D" && !canDouble) || (action === "R" && !canSurrender)) return;
     const adv = coachAdvice(h.cards, dUp, canDouble, canSplit, canSurrender);
@@ -865,8 +897,9 @@ function CoachTable({ balance, setBalance }) {
 
   const active = cq.hands[cq.active];
   const dUp = cq.dealer.length ? baseVal(cq.dealer[0]) : 0;
-  const aCanDouble = cq.phase === "player" && active && active.cards.length === 2 && balance >= active.bet;
-  const aCanSplit = cq.phase === "player" && active && active.cards.length === 2 && splittable(active.cards) && cq.hands.length < 4 && !active.isSplitAce && balance >= active.bet;
+  const cqExposure = cq.hands.reduce((s, x) => s + x.bet, 0);
+  const aCanDouble = cq.phase === "player" && active && active.cards.length === 2 && cqExposure + active.bet <= balance;
+  const aCanSplit = cq.phase === "player" && active && active.cards.length === 2 && splittable(active.cards) && cq.hands.length < 4 && !active.isSplitAce && cqExposure + active.bet <= balance;
   const aCanHit = cq.phase === "player" && active && handTotal(active.cards).total <= 21;
   const aCanSurr = cq.phase === "player" && active && active.cards.length === 2 && cq.hands.length === 1 && !active.isSplitAce;
   const adv = cq.phase === "player" && active ? coachAdvice(active.cards, dUp, aCanDouble, aCanSplit, aCanSurr) : [];
@@ -942,27 +975,40 @@ function CoachTable({ balance, setBalance }) {
 
         {/* action dock */}
         <div className="action-dock">
-        {cq.phase === "idle" || cq.phase === "done" ? (
+        {cq.phase === "idle" ? (
+          /* --- betting on a blank table: build the bet with chips --- */
           <div>
-            {cq.phase === "done" && cq.message && (
+            <div className="flex items-center gap-2 flex-wrap mb-2">
+              {CHIPS.map((c) => <button key={c} className="chip-btn" style={{ background: CHIP_STYLE[c] }} disabled={betAmt + c > balance} onClick={() => setBetAmt((b) => b + c)}>${c}</button>)}
+              <button onClick={() => setBetAmt(0)} disabled={!betAmt} style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${C.border}`, background: "transparent", color: C.sub, fontSize: 12, fontWeight: 700, cursor: betAmt ? "pointer" : "not-allowed", opacity: betAmt ? 1 : 0.5 }}>Clear</button>
+              <span className="text-xs mono" style={{ color: C.gold, marginLeft: "auto" }}>{betAmt ? "Bet " + fmtMoney(betAmt) : ""}</span>
+            </div>
+            {(() => { const v = betVerdict(); return !hideC && (
+              v ? <div className="text-xs mb-2 rounded-lg p-2" style={{ color: C.sub, background: C.panel2, border: `1px solid ${v.tone}` }}><b style={{ color: v.tone }}>{v.head}</b> {v.text}</div>
+                : <div className="text-xs mb-2" style={{ color: C.sub }}>Coach: TC {signed(tcFloor)} → about <b className="mono" style={{ color: C.gold }}>{fmtMoney(recBet)}</b> ({suggestedUnits(tc)}× base). Decide the ramp before the cards — never off the last result.</div>
+            ); })()}
+            <button className="act-btn" disabled={betAmt <= 0 || betAmt > balance} onClick={dealCoach} style={{ width: "100%", padding: "14px 0", borderRadius: 12, border: "none", cursor: betAmt > 0 ? "pointer" : "not-allowed", background: betAmt > 0 ? `linear-gradient(160deg,#f2c96a,${C.gold})` : C.panel2, color: betAmt > 0 ? "#0a0e0c" : C.sub, fontWeight: 800, fontSize: 15 }}>Deal{betAmt ? " — " + fmtMoney(betAmt) : ""}</button>
+          </div>
+        ) : cq.phase === "done" ? (
+          /* --- round over: fast rebet, or wipe the table to change the bet --- */
+          <div>
+            {cq.message && (
               <div className="rounded-lg p-2 mb-2 flex items-center gap-2" style={{ background: C.panel2, border: `1px solid ${cq.roundNet > 0 ? C.split : cq.roundNet < 0 ? C.stand : C.border}` }}>
                 <span className="text-sm" style={{ color: C.ink }}>{cq.message}</span><span className="mono text-sm" style={{ fontWeight: 700, color: cq.roundNet > 0 ? C.split : cq.roundNet < 0 ? C.stand : C.sub }}>{fmtSigned(cq.roundNet)}</span>
               </div>
             )}
-            <div className="flex items-center gap-2 flex-wrap mb-2">
-              {CHIPS.map((c) => <button key={c} className="chip-btn" style={{ background: CHIP_STYLE[c] }} disabled={betAmt + c > balance} onClick={() => setBetAmt((b) => b + c)}>${c}</button>)}
-              <button onClick={() => setBetAmt(0)} style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${C.border}`, background: "transparent", color: C.sub, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Clear</button>
-              <span className="text-xs mono" style={{ color: C.gold, marginLeft: "auto" }}>{betAmt ? "Bet " + fmtMoney(betAmt) : ""}</span>
+            {betAmt > balance && <div className="text-xs mb-2" style={{ color: C.stand }}>Balance can't cover the last bet — change it.</div>}
+            <div className="grid grid-cols-2 gap-2">
+              <button className="act-btn" disabled={betAmt <= 0 || betAmt > balance} onClick={dealCoach} style={{ padding: "14px 0", borderRadius: 12, border: "none", cursor: betAmt > 0 && betAmt <= balance ? "pointer" : "not-allowed", background: betAmt > 0 && betAmt <= balance ? `linear-gradient(160deg,#f2c96a,${C.gold})` : C.panel2, color: betAmt > 0 && betAmt <= balance ? "#0a0e0c" : C.sub, fontWeight: 800, fontSize: 14 }}>Rebet {fmtMoney(betAmt)} &amp; deal</button>
+              <button className="act-btn" onClick={newBet} style={{ padding: "14px 0", borderRadius: 12, border: `1px solid ${C.gold}`, cursor: "pointer", background: "transparent", color: C.gold, fontWeight: 800, fontSize: 14 }}>Change bet</button>
             </div>
-            {!hideC && <div className="text-xs mb-2" style={{ color: C.sub }}>Coach: TC {signed(tcFloor)} → bet ~<b className="mono" style={{ color: C.gold }}>{suggestedUnits(tc)}×</b> your base unit{tcFloor >= 1 ? " — the shoe favors you, press it." : " — no edge yet, keep it minimum."}</div>}
-            <button className="act-btn" disabled={betAmt <= 0 || betAmt > balance} onClick={dealCoach} style={{ width: "100%", padding: "14px 0", borderRadius: 12, border: "none", cursor: betAmt > 0 ? "pointer" : "not-allowed", background: betAmt > 0 ? `linear-gradient(160deg,#f2c96a,${C.gold})` : C.panel2, color: betAmt > 0 ? "#0a0e0c" : C.sub, fontWeight: 800, fontSize: 15 }}>{cq.phase === "idle" ? "Deal" : "Deal next hand →"}</button>
           </div>
         ) : cq.phase === "insurance" ? (
           <div className="rounded-xl p-3" style={{ background: C.panel, border: `1px solid ${C.double}` }}>
             <div className="text-sm mb-1" style={{ color: C.ink }}><b style={{ color: C.double }}>Dealer shows an Ace.</b> Insurance?</div>
             <div className="text-xs mb-2" style={{ color: C.sub }}>Coach: insurance is a side bet that the hole card is a ten. Flat EV is <b style={{ color: C.stand }}>−7.7¢ per $1</b> insured — decline unless the shoe is ten-rich: take it at <b>TC +3 or higher</b>.{!hideC && <> You're at TC <b className="mono" style={{ color: tcFloor >= 3 ? C.split : C.ink }}>{signed(tcFloor)}</b> → <b>{tcFloor >= 3 ? "TAKE it" : "DECLINE"}</b>.</>}</div>
             <div className="grid grid-cols-2 gap-2">
-              <button className="act-btn" onClick={() => coachInsurance(true)} style={{ padding: "12px 0", borderRadius: 12, border: "none", cursor: "pointer", background: C.double, color: "#0a0e0c", fontWeight: 800, fontSize: 14 }}>Take insurance</button>
+              <button className="act-btn" disabled={balance < cq.bet * 1.5} onClick={() => coachInsurance(true)} style={{ padding: "12px 0", borderRadius: 12, border: "none", cursor: balance >= cq.bet * 1.5 ? "pointer" : "not-allowed", background: C.double, color: "#0a0e0c", fontWeight: 800, fontSize: 14, opacity: balance >= cq.bet * 1.5 ? 1 : 0.4 }}>Take insurance</button>
               <button className="act-btn" onClick={() => coachInsurance(false)} style={{ padding: "12px 0", borderRadius: 12, border: `1px solid ${C.border}`, cursor: "pointer", background: "transparent", color: C.ink, fontWeight: 800, fontSize: 14 }}>No insurance</button>
             </div>
           </div>
@@ -986,7 +1032,14 @@ function CoachTable({ balance, setBalance }) {
         <div className="grid grid-cols-2 gap-2 mb-3">
           <Stat label="Followed coach" value={cs.decisions ? followRate + "%" : "—"} sub={`${cs.followed}/${cs.decisions} moves`} color={C.split} />
           <Stat label="Hands" value={cs.hands} sub="this sitting" color={C.gold} />
+          <Stat label="Bet discipline" value={cs.bets ? Math.round((cs.aligned / cs.bets) * 100) + "%" : "—"} sub="sized to the count" color={C.double} />
+          <Stat label="Loss-chases" value={cs.lossChases} sub={cs.winPresses ? `+${cs.winPresses} win-presses` : "raises after a loss"} color={cs.lossChases > 0 ? C.stand : C.split} />
         </div>
+        {cs.lossChases > 0 && (
+          <div className="rounded-lg p-3 mb-3 text-xs" style={{ background: "rgba(251,91,107,.07)", border: `1px solid ${C.stand}`, color: C.sub }}>
+            <b style={{ color: C.stand }}>Pattern flagged:</b> you've raised after a loss {cs.lossChases}×. Loss-chasing is the single most reliable tilt marker in the gambling-behavior literature, and mathematically it buys nothing — rounds are independent, so a progression only concentrates your losses into rarer, bigger ones. The evidence-backed fix is <i>pre-commitment</i>: fix the count ramp before the session and let it, not the last hand, size every bet.
+          </div>
+        )}
         {clog.length > 0 && (
           <div className="mb-3">
             <div className="text-xs mb-1" style={{ color: C.sub }}>Recent decisions vs coach:</div>
