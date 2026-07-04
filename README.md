@@ -21,6 +21,8 @@ An interactive trainer for **basic strategy** and **Hi-Lo card counting**, built
 
 **Drill → Flashcards** — one decision at a time, pure basic strategy, with instant right/wrong and an explanation. Filter by hard totals, soft totals, or pairs.
 
+**Coach Me** — the inverse of Drill: the coach speaks **before** you act. Build a bet from chips at a real-feel table, deal, and every legal action is priced — exact EV per $1, the cost of each suboptimal line ("standing here costs 32¢/$1"), and the volatility (±SD) of each action, with a count overlay for Illustrious-18/Fab-4 flips and a session ledger of the EV you gave up by overriding the coach. Numbers computed by dynamic programming (Baldwin et al. 1956 method) — see [STRATEGY.md](STRATEGY.md) §6.
+
 **Drill → Full game + count** — a real 6-deck shoe played to the end, laid out as a **single frame**: bankroll and bet sizing on top, the live count next, and the table with per-move coaching side by side (table left, learning/results right on wide screens; stacked on phones).
 
 - **Bankroll & bet sizing** — a real dollar balance and a $5 / $25 / $100 chip selector (locked mid-hand), with the next bet shown up front and a **count-based bet ramp** ("bet with the count") that scales 1×–12× with the true count, à la Kelly. Win/loss *progression* betting is deliberately **not** offered — it's mathematically fake (see [STRATEGY.md](STRATEGY.md)).

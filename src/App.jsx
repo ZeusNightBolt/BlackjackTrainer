@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { EVDATA } from "./evdata";
 
 /* ============================================================
    Blackjack Trainer — basic strategy + Hi-Lo card counting
@@ -240,6 +241,77 @@ const LS_KEY = "bjt-save-v1";
 function loadSaved() { try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch { return {}; } }
 const SAVED = loadSaved();
 
+/* ---------------- shared round engine (used by Drill full game and Coach Me) ---------------- */
+function finalizeOpening(cg) {
+  const du = cg.dealer[0], dh = cg.dealer[1], dUp = baseVal(du);
+  const peeks = dUp === 11 || dUp === 10;
+  const dealerBJ = peeks && handTotal(cg.dealer).total === 21;
+  const playerBJ = handTotal(cg.hands[0].cards).total === 21;
+  const insNet = cg.insNet || 0;
+  if (dealerBJ) {
+    cg.dealerRevealed = true; cg.rc += tag(dh);
+    const h = cg.hands[0];
+    if (playerBJ) { h.result = "push"; cg.message = "Both blackjack — push."; cg.roundNet = insNet; cg.phase = "done"; return { won: 0, lost: 0, push: 1, flawed: 0, flawedWon: 0, net: cg.roundNet }; }
+    h.result = "lose"; cg.message = "Dealer blackjack."; cg.roundNet = -cg.bet + insNet; cg.phase = "done"; return { won: 0, lost: 1, push: 0, flawed: 0, flawedWon: 0, net: cg.roundNet };
+  }
+  if (playerBJ) {
+    const h = cg.hands[0]; h.result = "win"; h.bet = cg.bet * 1.5; cg.dealerRevealed = false; cg.phase = "done"; cg.message = "Blackjack! Paid 3:2."; cg.roundNet = cg.bet * 1.5 + insNet;
+    return { won: 1, lost: 0, push: 0, flawed: 0, flawedWon: 0, net: cg.roundNet };
+  }
+  cg.phase = "player"; cg.active = 0; cg.insNet = insNet; return null;
+}
+function resolveRound(cg) {
+  const live = cg.hands.some((h) => handTotal(h.cards).total <= 21);
+  if (live) {
+    cg.dealerRevealed = true; cg.rc += tag(cg.dealer[1]);
+    let guard = 0; while (guard++ < 20) { const { total, soft } = handTotal(cg.dealer); if (total < 17 || (total === 17 && soft)) { const c = drawFrom(cg); cg.rc += tag(c); cg.dealer.push(c); } else break; }
+  } else cg.dealerRevealed = false;
+  const dT = handTotal(cg.dealer).total, dBust = dT > 21;
+  let won = 0, lost = 0, push = 0, flawed = 0, flawedWon = 0, net = 0;
+  for (const h of cg.hands) {
+    const pT = handTotal(h.cards).total; let res;
+    if (h.surrendered) { net -= h.bet / 2; lost++; continue; }
+    if (pT > 21) res = "lose"; else if (!live) res = "lose"; else if (dBust) res = "win"; else if (pT > dT) res = "win"; else if (pT < dT) res = "lose"; else res = "push";
+    h.result = res;
+    if (res === "win") { won++; net += h.bet; } else if (res === "lose") { lost++; net -= h.bet; } else push++;
+    if (h.mistakes > 0) { flawed++; if (res === "win") flawedWon++; }
+  }
+  net += cg.insNet || 0;
+  cg.phase = "done"; cg.roundNet = net; cg.roundFlawedWon = flawedWon;
+  cg.message = live ? (dBust ? "Dealer busts." : "Dealer stands on " + dT + ".") : "All hands busted — dealer doesn't draw.";
+  return { won, lost, push, flawed, flawedWon, net };
+}
+function advance(cg) {
+  const next = cg.hands.findIndex((h) => !h.done);
+  if (next === -1) return resolveRound(cg);
+  cg.active = next; const h = cg.hands[next];
+  if (h.cards.length === 1) { const c = drawFrom(cg); cg.rc += tag(c); h.cards.push(c); if (h.isSplitAce) { h.done = true; return advance(cg); } }
+  return null;
+}
+
+/* ---------------- Coach: per-action EV/SD lookup (see STRATEGY.md §7) ---------------- */
+function coachUpKey(dUp) { return dUp === 11 ? "A" : dUp === 10 ? "T" : String(dUp); }
+function coachAdvice(cards, dUp, canDouble, canSplit, canSurrender) {
+  const uk = coachUpKey(dUp);
+  const t = handTotal(cards);
+  if (t.total > 21) return [];
+  const totKey = (t.soft ? "S" : "H") + t.total;
+  const base = (EVDATA[totKey] || {})[uk];
+  if (!base) return [];
+  const out = [];
+  if (base.S) out.push({ a: "S", ev: base.S[0], sd: base.S[1] });
+  if (base.H && t.total < 21) out.push({ a: "H", ev: base.H[0], sd: base.H[1] });
+  if (canDouble && base.D) out.push({ a: "D", ev: base.D[0], sd: base.D[1] });
+  if (canSurrender && base.R) out.push({ a: "R", ev: base.R[0], sd: base.R[1] });
+  if (canSplit && splittable(cards)) {
+    const v = cards[0].val, pk = "P" + (v === "A" ? "A" : v === 10 ? "T" : v);
+    const p = (EVDATA[pk] || {})[uk];
+    if (p && p.P) out.push({ a: "P", ev: p.P[0], sd: p.P[1] });
+  }
+  out.sort((x, y) => y.ev - x.ev);
+  return out;
+}
+
 export default function App() {
   const [tab, setTab] = useState("learn");
   const [ruleSet, setRuleSet] = useState("american");
@@ -285,53 +357,7 @@ export default function App() {
   const tcFloor = Math.floor(tc);
   const countVisible = !hideCount || reveal;
 
-  /* ---------------- full game engine ---------------- */
-  function finalizeOpening(cg) {
-    const du = cg.dealer[0], dh = cg.dealer[1], dUp = baseVal(du);
-    const peeks = dUp === 11 || dUp === 10;
-    const dealerBJ = peeks && handTotal(cg.dealer).total === 21;
-    const playerBJ = handTotal(cg.hands[0].cards).total === 21;
-    const insNet = cg.insNet || 0;
-    if (dealerBJ) {
-      cg.dealerRevealed = true; cg.rc += tag(dh);
-      const h = cg.hands[0];
-      if (playerBJ) { h.result = "push"; cg.message = "Both blackjack — push."; cg.roundNet = insNet; cg.phase = "done"; return { won: 0, lost: 0, push: 1, flawed: 0, flawedWon: 0, net: cg.roundNet }; }
-      h.result = "lose"; cg.message = "Dealer blackjack."; cg.roundNet = -cg.bet + insNet; cg.phase = "done"; return { won: 0, lost: 1, push: 0, flawed: 0, flawedWon: 0, net: cg.roundNet };
-    }
-    if (playerBJ) {
-      const h = cg.hands[0]; h.result = "win"; h.bet = cg.bet * 1.5; cg.dealerRevealed = false; cg.phase = "done"; cg.message = "Blackjack! Paid 3:2."; cg.roundNet = cg.bet * 1.5 + insNet;
-      return { won: 1, lost: 0, push: 0, flawed: 0, flawedWon: 0, net: cg.roundNet };
-    }
-    cg.phase = "player"; cg.active = 0; cg.insNet = insNet; return null;
-  }
-  function resolveRound(cg) {
-    const live = cg.hands.some((h) => handTotal(h.cards).total <= 21);
-    if (live) {
-      cg.dealerRevealed = true; cg.rc += tag(cg.dealer[1]);
-      let guard = 0; while (guard++ < 20) { const { total, soft } = handTotal(cg.dealer); if (total < 17 || (total === 17 && soft)) { const c = drawFrom(cg); cg.rc += tag(c); cg.dealer.push(c); } else break; }
-    } else cg.dealerRevealed = false;
-    const dT = handTotal(cg.dealer).total, dBust = dT > 21;
-    let won = 0, lost = 0, push = 0, flawed = 0, flawedWon = 0, net = 0;
-    for (const h of cg.hands) {
-      const pT = handTotal(h.cards).total; let res;
-      if (pT > 21) res = "lose"; else if (!live) res = "lose"; else if (dBust) res = "win"; else if (pT > dT) res = "win"; else if (pT < dT) res = "lose"; else res = "push";
-      h.result = res;
-      if (res === "win") { won++; net += h.bet; } else if (res === "lose") { lost++; net -= h.bet; } else push++;
-      if (h.mistakes > 0) { flawed++; if (res === "win") flawedWon++; }
-    }
-    net += cg.insNet || 0;
-    cg.phase = "done"; cg.roundNet = net; cg.roundFlawedWon = flawedWon;
-    cg.message = live ? (dBust ? "Dealer busts." : "Dealer stands on " + dT + ".") : "All hands busted — dealer doesn't draw.";
-    return { won, lost, push, flawed, flawedWon, net };
-  }
-  function advance(cg) {
-    const next = cg.hands.findIndex((h) => !h.done);
-    if (next === -1) return resolveRound(cg);
-    cg.active = next; const h = cg.hands[next];
-    if (h.cards.length === 1) { const c = drawFrom(cg); cg.rc += tag(c); h.cards.push(c); if (h.isSplitAce) { h.done = true; return advance(cg); } }
-    return null;
-  }
-
+  /* ---------------- full game engine (module-scope fns shared with Coach Me) ---------------- */
   function dealNewRound() {
     if (balance < chipSize) return;
     let shoe = g.shoe.length < CUT ? buildShoe() : [...g.shoe];
@@ -492,7 +518,7 @@ export default function App() {
               {["american", "european"].map((r) => <button key={r} onClick={() => setRuleSet(r)} style={{ padding: "5px 11px", borderRadius: 999, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700, textTransform: "capitalize", background: ruleSet === r ? C.felt : "transparent", color: ruleSet === r ? "#fff" : C.sub }}>{r}</button>)}
             </div>
           </div>
-          <div className="flex gap-1 mt-2">{tabBtn("learn", "Learn")}{tabBtn("chart", "Chart")}{tabBtn("drill", "Drill")}</div>
+          <div className="flex gap-1 mt-2">{tabBtn("learn", "Learn")}{tabBtn("chart", "Chart")}{tabBtn("drill", "Drill")}{tabBtn("coach", "Coach Me")}</div>
         </div>
       </header>
 
@@ -505,6 +531,7 @@ export default function App() {
             <Section title="Your five moves"><Bullet c={C.hit} k="Hit">Take another card.</Bullet><Bullet c={C.stand} k="Stand">Stop and keep your total.</Bullet><Bullet c={C.double} k="Double">Double the bet, take <b>one</b> more card, stop.</Bullet><Bullet c={C.split} k="Split">Only with a pair — two hands, one bet each.</Bullet><Bullet c={C.surrender} k="Surrender">Give up half your bet and end the hand — only on your original two cards, before you've hit or split.</Bullet></Section>
             <Section title="The one idea behind the chart">Assume the dealer's hidden card is a 10 (a third of the deck is ten-value). Dealer showing <b>2–6</b> → likely to bust, so you stand on stiffs and press bets. Dealer showing <b>7–Ace</b> → likely 17+, so you hit your stiffs. The Chart tab shows the real bust rates.</Section>
             <Section title="Then learn to count">Basic strategy only makes you lose slowly (~0.5%). The edge comes from <b>counting</b>: track high vs low cards, bet more and deviate when the shoe is ten-rich. The Drill → <b>Full game</b> tab has a live running/true count and grades your count-based plays. Start there once the chart is automatic.</Section>
+            <Section title="Two ways to train"><b style={{ color: C.gold }}>Drill</b> tests you — you act first, then get graded. <b style={{ color: C.gold }}>Coach Me</b> teaches you — before you act, the coach prices every legal move (exact EV per $1, what each mistake costs, and how wild each action's swings are) and tracks the EV you give up when you override it. Learn in Coach Me, prove it in Drill.</Section>
             <Section title="Money rules"><div className="grid gap-1.5"><Rule><b>Never take insurance</b> unless you're counting and the true count is +3 or higher.</Rule><Rule>Only play <b>3:2</b> tables — 6:5 roughly triples the house edge.</Rule><Rule>Size your bet to the <b>count</b>, never to a win/loss streak — progression systems (Martingale, "chase your losses") don't change your EV by a cent; they just reshape variance until they hit the table limit.</Rule><Rule>Counting only pays with a <b>bet spread</b> over lots of hands; flat-betting a count just breaks even, and on a 6-deck shoe a short session is mostly variance.</Rule><Rule><b>Surrender</b> the hands you'd lose more than half the time played out: hard 16 (never the 8,8 pair) vs 9/10/A, and hard 15 vs 10 — plus, under H17, 15 vs A, 17 vs A, and 8,8 vs A.</Rule></div></Section>
             <div className="rounded-lg p-3 mt-4 text-xs" style={{ background: C.panel2, border: `1px solid ${C.border}`, color: C.sub }}>Sources: Wizard of Odds (basic strategy, Hi-Lo, Illustrious 18) · Schlesinger, <i>Blackjack Attack</i> (Illustrious 18 &amp; Fab 4 surrender indices) · Griffin, <i>The Theory of Blackjack</i> · basicstrategy.app. EV figures verified with a 6-deck H17 combinatorial simulation. Verify table rules before you sit.</div>
           </div>
@@ -750,7 +777,229 @@ export default function App() {
             )}
           </div>
         )}
+
+        {/* ------------------------- COACH ME ------------------------- */}
+        {tab === "coach" && <CoachTable balance={balance} setBalance={setBalance} />}
       </main>
+    </div>
+  );
+}
+
+/* =============================== COACH ME ===============================
+   Real-table flow: build a bet from chips, deal, and the coach ranks every
+   legal action by expected value BEFORE you act — with the cost of each
+   suboptimal line and the volatility (SD) of the action's outcome.
+   EV/SD from src/evdata.js (see STRATEGY.md §7 for method + literature). */
+const evc = (ev) => (ev >= 0 ? "+" : "−") + Math.abs(ev * 100).toFixed(1) + "¢";
+function CoachTable({ balance, setBalance }) {
+  const [cq, setCq] = useState(INIT_G);
+  const [betAmt, setBetAmt] = useState(0);
+  const [cs, setCs] = useState({ hands: 0, decisions: 0, followed: 0, evGiven: 0 });
+  const [clog, setClog] = useState([]);
+  const [hideC, setHideC] = useState(false);
+
+  const decksRem = cq.shoe.length / 52;
+  const tc = cq.shoe.length ? cq.rc / decksRem : 0;
+  const tcFloor = Math.floor(tc);
+
+  function settle(S) {
+    if (!S) return;
+    setCs((p) => ({ ...p, hands: p.hands + 1 }));
+    setBalance((b) => Math.round((b + S.net) * 100) / 100);
+  }
+  function dealCoach() {
+    if (betAmt <= 0 || betAmt > balance) return;
+    let shoe = cq.shoe.length < CUT ? buildShoe() : [...cq.shoe];
+    const rc0 = cq.shoe.length < CUT ? 0 : cq.rc;
+    const cg = { ...INIT_G, shoe, rc: rc0, bet: betAmt };
+    const p0 = drawFrom(cg), du = drawFrom(cg), p1 = drawFrom(cg), dh = drawFrom(cg);
+    cg.rc += tag(p0) + tag(p1) + tag(du);
+    cg.dealer = [du, dh];
+    cg.hands = [{ cards: [p0, p1], bet: betAmt, done: false, doubled: false, mistakes: 0, isSplitAce: false, result: null }];
+    if (baseVal(du) === 11) { cg.phase = "insurance"; setCq(cg); return; }
+    const S = finalizeOpening(cg);
+    setCq(cg); settle(S);
+  }
+  function coachInsurance(take) {
+    if (cq.phase !== "insurance") return;
+    const cg = { ...cq, shoe: [...cq.shoe], dealer: [...cq.dealer], hands: cq.hands.map((h) => ({ ...h, cards: [...h.cards] })) };
+    const dealerBJ = handTotal(cg.dealer).total === 21;
+    cg.insNet = take ? (dealerBJ ? cg.bet : -cg.bet / 2) : 0;
+    const S = finalizeOpening(cg);
+    setCq(cg); settle(S);
+  }
+  function coachAct(action) {
+    if (cq.phase !== "player") return;
+    const cg = { ...cq, shoe: [...cq.shoe], dealer: [...cq.dealer], hands: cq.hands.map((h) => ({ ...h, cards: [...h.cards] })) };
+    const idx = cg.active, h = cg.hands[idx], dUp = baseVal(cg.dealer[0]);
+    const canDouble = h.cards.length === 2 && balance >= h.bet;
+    const canSplit = h.cards.length === 2 && splittable(h.cards) && cg.hands.length < 4 && !h.isSplitAce && balance >= h.bet;
+    const canSurrender = h.cards.length === 2 && cg.hands.length === 1 && !h.isSplitAce;
+    if ((action === "P" && !canSplit) || (action === "D" && !canDouble) || (action === "R" && !canSurrender)) return;
+    const adv = coachAdvice(h.cards, dUp, canDouble, canSplit, canSurrender);
+    const best = adv[0], chosen = adv.find((x) => x.a === action);
+    if (best && chosen) {
+      const gave = Math.max(0, (best.ev - chosen.ev)) * h.bet;
+      setCs((p) => ({ ...p, decisions: p.decisions + 1, followed: p.followed + (action === best.a ? 1 : 0), evGiven: p.evGiven + gave }));
+      setClog((L) => [{ txt: handDesc(h.cards) + " vs " + cg.dealer[0].rank, best: best.a, you: action, cost: (best.ev - chosen.ev) * h.bet }, ...L].slice(0, 8));
+    }
+    let S = null;
+    const drawV = () => { const c = drawFrom(cg); cg.rc += tag(c); return c; };
+    if (action === "H") { h.cards.push(drawV()); if (handTotal(h.cards).total > 21) { h.done = true; S = advance(cg); } }
+    else if (action === "S") { h.done = true; S = advance(cg); }
+    else if (action === "D") { h.bet *= 2; h.doubled = true; h.cards.push(drawV()); h.done = true; S = advance(cg); }
+    else if (action === "P") {
+      const [c0, c1] = h.cards, isA = c0.val === "A";
+      const A = { cards: [c0], bet: cq.bet, done: false, doubled: false, mistakes: 0, isSplitAce: isA, result: null };
+      const B = { cards: [c1], bet: cq.bet, done: false, doubled: false, mistakes: 0, isSplitAce: isA, result: null };
+      if (isA) { A.cards.push(drawV()); A.done = true; cg.hands.splice(idx, 1, A, B); S = advance(cg); }
+      else { A.cards.push(drawV()); cg.hands.splice(idx, 1, A, B); cg.active = idx; }
+    }
+    else if (action === "R") {
+      h.surrendered = true; h.done = true; h.result = "surrender";
+      cg.dealerRevealed = false; cg.roundNet = -(h.bet / 2); cg.message = "Surrendered — half back."; cg.phase = "done";
+      S = { net: cg.roundNet };
+    }
+    setCq(cg); settle(S);
+  }
+
+  const active = cq.hands[cq.active];
+  const dUp = cq.dealer.length ? baseVal(cq.dealer[0]) : 0;
+  const aCanDouble = cq.phase === "player" && active && active.cards.length === 2 && balance >= active.bet;
+  const aCanSplit = cq.phase === "player" && active && active.cards.length === 2 && splittable(active.cards) && cq.hands.length < 4 && !active.isSplitAce && balance >= active.bet;
+  const aCanHit = cq.phase === "player" && active && handTotal(active.cards).total <= 21;
+  const aCanSurr = cq.phase === "player" && active && active.cards.length === 2 && cq.hands.length === 1 && !active.isSplitAce;
+  const adv = cq.phase === "player" && active ? coachAdvice(active.cards, dUp, aCanDouble, aCanSplit, aCanSurr) : [];
+  const best = adv[0];
+  const play = cq.phase === "player" && active ? getPlay(active.cards, dUp, aCanDouble, aCanSplit, tcFloor, true, aCanSurr) : null;
+  const countFlip = best && play && play.move !== best.a;
+  const followRate = cs.decisions ? Math.round((cs.followed / cs.decisions) * 100) : 0;
+
+  const barW = (ev) => Math.max(4, Math.min(100, ((ev + 1) / 2) * 100));
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <div className="text-xs" style={{ color: C.sub }}>The coach speaks <b style={{ color: C.gold }}>before</b> you act — every legal move, priced. 6 decks · H17 · 3:2 · late surrender</div>
+        <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none" style={{ color: C.sub }}><input type="checkbox" checked={hideC} onChange={(e) => setHideC(e.target.checked)} />Hide count</label>
+      </div>
+
+      <div className="rounded-xl p-3 mb-3 flex items-center justify-between flex-wrap gap-2" style={{ background: C.panel, border: `1px solid ${C.gold}` }}>
+        <div><div className="text-xs" style={{ color: C.sub }}>Balance</div><div className="mono" style={{ fontSize: 20, fontWeight: 700, color: balance >= STARTING_BALANCE ? C.split : C.ink }}>{fmtMoney(balance)}</div></div>
+        {!hideC && <div className="flex gap-4"><MiniStat label="Running" value={signed(cq.rc)} color={C.ink} /><MiniStat label="True" value={cq.shoe.length ? signed(Math.round(tc * 10) / 10) : "0"} color={tc >= 2 ? C.split : C.ink} /><MiniStat label="Decks" value={cq.shoe.length ? decksRem.toFixed(1) : "6.0"} color={C.sub} /></div>}
+      </div>
+
+      <div className="game-grid">
+      <div>
+        {/* felt */}
+        <div className={"rounded-2xl p-4 mb-3 felt" + (cq.phase === "done" ? (cq.roundNet > 0 ? " won" : cq.roundNet < 0 ? " lost" : "") : "")}>
+          <div className="flex items-center gap-2 mb-1"><span className="text-xs" style={{ color: "rgba(255,255,255,.6)" }}>Dealer</span>{cq.dealerRevealed && cq.dealer.length > 0 && <span className="mono text-xs" style={{ color: "#fff", fontWeight: 700 }}>{totalStr(cq.dealer)}</span>}</div>
+          <div className="flex gap-2 mb-4" style={{ flexWrap: "wrap", minHeight: 62 }}>
+            {cq.dealer.length === 0 ? <span className="text-xs" style={{ color: "rgba(255,255,255,.5)" }}>—</span> :
+              cq.dealerRevealed
+                ? cq.dealer.map((c, i) => <PlayingCard key={i} card={c} small anim={i === 1 ? "flip" : i > 1 ? "deal" : undefined} delay={i > 1 ? (i - 1) * 140 : 0} />)
+                : <><PlayingCard card={cq.dealer[0]} small anim="deal" /><PlayingCard hidden small anim="deal" delay={90} /></>}
+          </div>
+          <div className="text-xs mb-1" style={{ color: "rgba(255,255,255,.6)" }}>You{cq.hands.length > 1 ? ` · ${cq.hands.length} hands` : ""}</div>
+          <div className="flex gap-3 items-start" style={{ flexWrap: "wrap", minHeight: 70 }}>
+            {cq.hands.length === 0 ? (
+              <div className="flex items-center gap-3">
+                <div style={{ width: 74, height: 74, borderRadius: "50%", border: "2px dashed rgba(255,255,255,.4)", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column" }}>
+                  <span className="mono" style={{ color: "#fff", fontWeight: 700, fontSize: betAmt >= 1000 ? 12 : 14 }}>{betAmt ? fmtMoney(betAmt) : "BET"}</span>
+                </div>
+                <span className="text-xs" style={{ color: "rgba(255,255,255,.55)", maxWidth: 150 }}>Tap chips below to build your bet, then deal.</span>
+              </div>
+            ) :
+              cq.hands.map((h, hi) => { const isActive = cq.phase === "player" && hi === cq.active; const rc = h.result === "win" ? C.split : h.result === "lose" ? C.stand : h.result === "push" ? C.gold : h.result === "surrender" ? C.surrender : "transparent"; return (
+                <div key={hi} className={isActive ? "hand-active" : ""} style={{ padding: 6, borderRadius: 10, outline: isActive ? `2px solid ${C.gold}` : h.result ? `2px solid ${rc}` : "2px solid transparent", outlineOffset: 1 }}>
+                  <div className="flex gap-1.5">{h.cards.map((c, i) => <PlayingCard key={i} card={c} small anim="deal" delay={h.cards.length === 2 && i < 2 ? i * 90 : 0} />)}</div>
+                  <div className="flex items-center gap-1.5 mt-1"><span className="mono text-xs" style={{ color: "#fff", fontWeight: 700 }}>{totalStr(h.cards)}</span><span className="mono text-xs" style={{ color: "rgba(255,255,255,.55)" }}>{fmtMoney(h.bet)}</span>{h.result && <span className="result-pop" style={{ background: rc, color: "#0a0e0c", fontWeight: 800, fontSize: 10, padding: "1px 6px", borderRadius: 4, textTransform: "uppercase" }}>{h.result}</span>}</div>
+                </div>); })}
+          </div>
+        </div>
+
+        {/* pre-move coach advice — ABOVE the buttons so you read it before acting */}
+        {cq.phase === "player" && best && (
+          <div className="rounded-xl p-3 mb-2" style={{ background: C.panel, border: `1px solid ${MOVE[best.a].color}` }}>
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
+              <span className="text-xs" style={{ color: C.sub }}>COACH:</span>
+              <span style={{ background: MOVE[best.a].color, color: "#0a0e0c", fontWeight: 800, fontSize: 13, padding: "2px 10px", borderRadius: 6 }}>{MOVE[best.a].label}</span>
+              <span className="mono text-xs" style={{ color: C.sub }}>{handDesc(active.cards)} vs {cq.dealer[0].rank}</span>
+              {countFlip && <span className="text-xs" style={{ color: C.double, fontWeight: 700 }}>count says {MOVE[play.move].label} (TC {signed(tcFloor)}{play.rec ? `, index ${signed(play.rec.index)}` : ""})</span>}
+            </div>
+            <div className="grid gap-1">
+              {adv.map((x) => (
+                <div key={x.a} className="flex items-center gap-2">
+                  <span className="mono text-xs" style={{ width: 62, color: x.a === best.a ? MOVE[x.a].color : C.sub, fontWeight: x.a === best.a ? 800 : 600 }}>{MOVE[x.a].label}</span>
+                  <div style={{ flex: 1, height: 8, borderRadius: 4, background: C.panel2, overflow: "hidden" }}><div style={{ width: `${barW(x.ev)}%`, height: "100%", background: x.a === best.a ? MOVE[x.a].color : C.border }} /></div>
+                  <span className="mono text-xs" style={{ width: 52, textAlign: "right", color: x.ev >= 0 ? C.split : C.stand }}>{evc(x.ev)}</span>
+                  <span className="mono text-xs" style={{ width: 74, textAlign: "right", color: C.sub }}>{x.a === best.a ? `±${x.sd.toFixed(2)}u` : `-${((best.ev - x.ev) * 100).toFixed(1)}¢/$`}</span>
+                </div>
+              ))}
+            </div>
+            <div className="text-xs mt-2" style={{ color: C.sub }}>EV per $1 of your original bet · ±u = swing (SD) of the outcome. Doubling ~doubles the swing; surrender has zero variance.</div>
+          </div>
+        )}
+
+        {/* action dock */}
+        <div className="action-dock">
+        {cq.phase === "idle" || cq.phase === "done" ? (
+          <div>
+            {cq.phase === "done" && cq.message && (
+              <div className="rounded-lg p-2 mb-2 flex items-center gap-2" style={{ background: C.panel2, border: `1px solid ${cq.roundNet > 0 ? C.split : cq.roundNet < 0 ? C.stand : C.border}` }}>
+                <span className="text-sm" style={{ color: C.ink }}>{cq.message}</span><span className="mono text-sm" style={{ fontWeight: 700, color: cq.roundNet > 0 ? C.split : cq.roundNet < 0 ? C.stand : C.sub }}>{fmtSigned(cq.roundNet)}</span>
+              </div>
+            )}
+            <div className="flex items-center gap-2 flex-wrap mb-2">
+              {CHIPS.map((c) => <button key={c} className="chip-btn" style={{ background: CHIP_STYLE[c] }} disabled={betAmt + c > balance} onClick={() => setBetAmt((b) => b + c)}>${c}</button>)}
+              <button onClick={() => setBetAmt(0)} style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${C.border}`, background: "transparent", color: C.sub, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Clear</button>
+              <span className="text-xs mono" style={{ color: C.gold, marginLeft: "auto" }}>{betAmt ? "Bet " + fmtMoney(betAmt) : ""}</span>
+            </div>
+            {!hideC && <div className="text-xs mb-2" style={{ color: C.sub }}>Coach: TC {signed(tcFloor)} → bet ~<b className="mono" style={{ color: C.gold }}>{suggestedUnits(tc)}×</b> your base unit{tcFloor >= 1 ? " — the shoe favors you, press it." : " — no edge yet, keep it minimum."}</div>}
+            <button className="act-btn" disabled={betAmt <= 0 || betAmt > balance} onClick={dealCoach} style={{ width: "100%", padding: "14px 0", borderRadius: 12, border: "none", cursor: betAmt > 0 ? "pointer" : "not-allowed", background: betAmt > 0 ? `linear-gradient(160deg,#f2c96a,${C.gold})` : C.panel2, color: betAmt > 0 ? "#0a0e0c" : C.sub, fontWeight: 800, fontSize: 15 }}>{cq.phase === "idle" ? "Deal" : "Deal next hand →"}</button>
+          </div>
+        ) : cq.phase === "insurance" ? (
+          <div className="rounded-xl p-3" style={{ background: C.panel, border: `1px solid ${C.double}` }}>
+            <div className="text-sm mb-1" style={{ color: C.ink }}><b style={{ color: C.double }}>Dealer shows an Ace.</b> Insurance?</div>
+            <div className="text-xs mb-2" style={{ color: C.sub }}>Coach: insurance is a side bet that the hole card is a ten. Flat EV is <b style={{ color: C.stand }}>−7.7¢ per $1</b> insured — decline unless the shoe is ten-rich: take it at <b>TC +3 or higher</b>.{!hideC && <> You're at TC <b className="mono" style={{ color: tcFloor >= 3 ? C.split : C.ink }}>{signed(tcFloor)}</b> → <b>{tcFloor >= 3 ? "TAKE it" : "DECLINE"}</b>.</>}</div>
+            <div className="grid grid-cols-2 gap-2">
+              <button className="act-btn" onClick={() => coachInsurance(true)} style={{ padding: "12px 0", borderRadius: 12, border: "none", cursor: "pointer", background: C.double, color: "#0a0e0c", fontWeight: 800, fontSize: 14 }}>Take insurance</button>
+              <button className="act-btn" onClick={() => coachInsurance(false)} style={{ padding: "12px 0", borderRadius: 12, border: `1px solid ${C.border}`, cursor: "pointer", background: "transparent", color: C.ink, fontWeight: 800, fontSize: 14 }}>No insurance</button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            {aCanSurr && <button onClick={() => coachAct("R")} style={{ width: "100%", padding: "9px 0", borderRadius: 12, border: `1px solid ${C.surrender}`, cursor: "pointer", background: "rgba(167,139,250,.08)", color: C.surrender, fontWeight: 800, fontSize: 13, marginBottom: 8 }}>Surrender — take half back</button>}
+            <div className="grid grid-cols-4 gap-2">
+              {[["H", aCanHit], ["S", aCanHit], ["D", aCanDouble], ["P", aCanSplit]].map(([k, on]) => <button key={k} className="act-btn" disabled={!on} onClick={() => coachAct(k)} style={{ padding: "14px 0", borderRadius: 12, fontWeight: 800, fontSize: 14, color: "#0a0e0c", background: MOVE[k].color, opacity: on ? 1 : 0.28, border: "none", cursor: on ? "pointer" : "not-allowed", outline: best && best.a === k ? `3px solid #fff` : "none", outlineOffset: -3 }}>{MOVE[k].label}</button>)}
+            </div>
+          </div>
+        )}
+        </div>
+      </div>
+
+      {/* right column: session ledger */}
+      <div className="game-side">
+        <div className="rounded-xl p-3 mb-2" style={{ background: C.panel, border: `1px solid ${C.gold}` }}>
+          <div className="text-xs mb-1" style={{ color: C.sub }}>EV you gave up by overriding the coach</div>
+          <div className="flex items-end gap-2"><span className="mono" style={{ color: cs.evGiven > 0 ? C.stand : C.split, fontSize: 22, fontWeight: 700, lineHeight: 1 }}>{fmtMoney(cs.evGiven)}</span><span className="text-xs" style={{ color: C.sub, paddingBottom: 2 }}>expected cost of off-chart moves</span></div>
+        </div>
+        <div className="grid grid-cols-2 gap-2 mb-3">
+          <Stat label="Followed coach" value={cs.decisions ? followRate + "%" : "—"} sub={`${cs.followed}/${cs.decisions} moves`} color={C.split} />
+          <Stat label="Hands" value={cs.hands} sub="this sitting" color={C.gold} />
+        </div>
+        {clog.length > 0 && (
+          <div className="mb-3">
+            <div className="text-xs mb-1" style={{ color: C.sub }}>Recent decisions vs coach:</div>
+            <div className="rounded-lg p-2" style={{ background: C.panel2, border: `1px solid ${C.border}` }}>
+              {clog.map((l, i) => <div key={i} className="flex items-center gap-2 text-xs py-0.5"><span style={{ color: l.you === l.best ? C.split : C.stand, fontWeight: 800, width: 14 }}>{l.you === l.best ? "✓" : "✗"}</span><span className="mono" style={{ color: C.ink }}>{l.txt}</span><span style={{ color: C.sub }}>you {MOVE[l.you].label}</span>{l.you !== l.best && <span style={{ color: C.stand }}>coach {MOVE[l.best].label} ({fmtMoney(Math.abs(l.cost))} EV)</span>}</div>)}
+            </div>
+          </div>
+        )}
+        <div className="rounded-lg p-3 text-xs" style={{ background: C.panel2, border: `1px solid ${C.border}`, color: C.sub }}>
+          <b style={{ color: C.gold }}>Where these numbers come from:</b> exact expected values for every action, computed by dynamic programming for these rules (6-deck, H17, dealer peeks — conditioned on no dealer blackjack), the same method behind published basic-strategy tables since Baldwin et&nbsp;al. (1956) and Griffin's <i>Theory of Blackjack</i>. The ± swing is the standard deviation of each action's outcome — a typical hand runs ~±1.1&nbsp;units (Griffin/Schlesinger), doubles ~±1.9, splits more. "Costs ¢/$" is the EV you give up versus the coach's line; the count overlay flags Illustrious-18 / Fab-4 flips. Details in STRATEGY.md.
+        </div>
+      </div>
+      </div>
     </div>
   );
 }
