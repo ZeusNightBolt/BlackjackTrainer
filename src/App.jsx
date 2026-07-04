@@ -246,6 +246,9 @@ export default function App() {
     if (h.cards.length === 2 && cg.hands.length === 1 && !cg.whatIf) {
       cg.whatIf = { shoe: [...cg.shoe], player: [...h.cards], dealer: [...cg.dealer], bet: h.bet, taken: action, correct: play.move, canSurrender };
     }
+    // rolling pre-action snapshot: if this action busts the round, the dealer's ghost replay
+    // starts from THIS shoe (your bust card would have been the dealer's first draw)
+    cg.preShoe = [...cg.shoe]; cg.preTotal = handTotal(h.cards).total;
     cg.coach = { ok, isDev: play.isDeviation, you: action, correct: play.move, text: explainPlay(h.cards, dUp, play.move, play.isDeviation, play.rec, mtc, canSplit) };
     cg.log.push({ hand: idx + 1, txt: handDesc(h.cards) + " vs " + cg.dealer[0].rank, you: action, want: play.move, ok, dev: play.isDeviation });
     let S = null;
@@ -297,7 +300,8 @@ export default function App() {
   // ghost play-out: on all-bust or surrender, show what the dealer WOULD have done (display-only, never counted)
   const gSurrHand = g.phase === "done" ? g.hands.find((h) => h.surrendered) : null;
   const gAllBusted = g.phase === "done" && g.hands.length > 0 && !gSurrHand && g.hands.every((h) => handTotal(h.cards).total > 21);
-  const gGhost = g.phase === "done" && (gAllBusted || gSurrHand) && g.dealer.length >= 2 ? ghostDealerPlayout(g.dealer, g.shoe) : null;
+  // bust replays deal from the PRE-fatal-hit shoe: had you stood, your bust card is the dealer's first draw
+  const gGhost = g.phase === "done" && (gAllBusted || gSurrHand) && g.dealer.length >= 2 ? ghostDealerPlayout(g.dealer, (gAllBusted && g.preShoe) || g.shoe) : null;
 
   return (
     <div style={{ minHeight: "100vh", background: C.bg, color: C.ink, fontFamily: "'Space Grotesk',system-ui,sans-serif" }}>
@@ -323,6 +327,13 @@ export default function App() {
         .result-pop{animation:popIn .3s cubic-bezier(.2,.9,.3,1.4) both;}
         .delta-float{animation:floatUp 1.6s ease-out both;pointer-events:none;}
         .hand-active{animation:activePulse 1.5s ease-in-out infinite;}
+        /* --- win celebration --- */
+        @keyframes winPop{0%{transform:scale(.3) rotate(-4deg);opacity:0;}35%{transform:scale(1.18);opacity:1;}55%{transform:scale(1);}82%{opacity:1;}100%{transform:scale(1.04);opacity:0;}}
+        @keyframes confettiFly{0%{transform:translate(0,0) rotate(0) scale(1);opacity:1;}100%{transform:translate(var(--dx),var(--dy)) rotate(560deg) scale(.6);opacity:0;}}
+        .win-flash{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:6;}
+        .win-text{animation:winPop 1.7s cubic-bezier(.2,.9,.3,1.2) both;font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:clamp(26px,6vw,40px);color:#ffd76a;text-shadow:0 0 22px rgba(232,182,76,.85),0 2px 8px rgba(0,0,0,.65);letter-spacing:1px;}
+        .confetti{position:absolute;left:50%;top:50%;width:9px;height:9px;border-radius:2px;animation:confettiFly 1.5s ease-out both;}
+        @media(prefers-reduced-motion:reduce){.win-flash{display:none;}}
         /* --- casino chip buttons --- */
         .chip-btn{width:50px;height:50px;border-radius:50%;font-weight:800;font-size:12px;cursor:pointer;position:relative;border:none;
           display:inline-flex;align-items:center;justify-content:center;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.55);
@@ -331,7 +342,7 @@ export default function App() {
         .chip-btn.sel{transform:translateY(-3px);box-shadow:0 6px 12px rgba(0,0,0,.55), inset 0 -2px 4px rgba(0,0,0,.35), inset 0 2px 3px rgba(255,255,255,.2), 0 0 0 3px ${C.gold};}
         .chip-btn:disabled{opacity:.45;transform:none;}
         /* --- felt --- */
-        .felt{background:radial-gradient(ellipse at 50% 30%, ${C.felt}, ${C.feltDark} 85%);
+        .felt{position:relative;background:radial-gradient(ellipse at 50% 30%, ${C.felt}, ${C.feltDark} 85%);
           box-shadow:inset 0 0 46px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.05);
           border:1px solid ${C.border};transition:box-shadow .4s ease, border-color .4s ease;}
         .felt.won{border-color:${C.split};box-shadow:inset 0 0 46px rgba(0,0,0,.45), 0 0 18px rgba(52,211,153,.28);}
@@ -497,6 +508,7 @@ export default function App() {
 
                 {/* felt */}
                 <div className={"rounded-2xl p-4 mb-3 felt" + (g.phase === "done" ? (g.roundNet > 0 ? " won" : g.roundNet < 0 ? " lost" : "") : "")}>
+                  {g.phase === "done" && g.roundNet > 0 && <WinFlash key={agg.rounds} net={g.roundNet} blackjack={g.message.startsWith("Blackjack")} />}
                   <div className="text-center mb-2" style={{ color: "rgba(255,255,255,.35)", fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" }}>{RULES.name} · {fmtMoney(RULES.tableMin)} min · 3:2</div>
                   <div className="flex items-center gap-2 mb-1 flex-wrap"><span className="text-xs" style={{ color: "rgba(255,255,255,.6)" }}>Dealer</span>{g.dealerRevealed && g.dealer.length > 0 && <span className="mono text-xs" style={{ color: handTotal(g.dealer).total > 21 ? "#ffd7d7" : "#fff", fontWeight: 700 }}>{totalStr(g.dealer)}</span>}{gGhost && <span className="mono text-xs" style={{ color: "#ffe9a8", fontStyle: "italic" }}>→ would've {gGhost.total > 21 ? "BUSTED" : gGhost.draws.length ? "made " + gGhost.total : "stood on " + gGhost.total}</span>}</div>
                   <div className="flex gap-2 mb-1" style={{ flexWrap: "wrap" }}>
@@ -516,9 +528,9 @@ export default function App() {
                   </div>
                   <div className="mb-3">{gGhost && (
                     <span className="text-xs" style={{ color: "rgba(255,255,255,.55)", fontStyle: "italic" }}>
-                      {gSurrHand ? "hole card + draws shown for training — not counted" : "would-be draws shown for training — not counted"}
+                      {gSurrHand ? "hole card + draws shown for training — not counted" : "replay from before your bust card — it goes to the dealer here · not counted"}
                       {gSurrHand && <> · standing pat, your {handTotal(gSurrHand.cards).total} would have <b style={{ color: gGhost.total > 21 || handTotal(gSurrHand.cards).total > gGhost.total ? "#7ce3b1" : handTotal(gSurrHand.cards).total === gGhost.total ? "#ffe9a8" : "#ffb3bd" }}>{gGhost.total > 21 || handTotal(gSurrHand.cards).total > gGhost.total ? "WON" : handTotal(gSurrHand.cards).total === gGhost.total ? "PUSHED" : "LOST"}</b></>}
-                      {gAllBusted && gGhost.total > 21 && <> · the dealer was going to bust — <b style={{ color: "#ffe9a8" }}>standing pat would have won</b></>}
+                      {gAllBusted && g.hands.length === 1 && g.preTotal && <> · standing on your {g.preTotal}, you'd have <b style={{ color: gGhost.total > 21 || g.preTotal > gGhost.total ? "#7ce3b1" : g.preTotal === gGhost.total ? "#ffe9a8" : "#ffb3bd" }}>{gGhost.total > 21 || g.preTotal > gGhost.total ? "WON" : g.preTotal === gGhost.total ? "PUSHED" : "lost anyway"}</b></>}
                     </span>
                   )}</div>
                   <div className="text-xs mb-1" style={{ color: "rgba(255,255,255,.6)" }}>You{g.hands.length > 1 ? ` · ${g.hands.length} hands` : ""}</div>
@@ -728,6 +740,7 @@ function CoachTable({ balance, setBalance }) {
     if (h.cards.length === 2 && cg.hands.length === 1 && !cg.whatIf) {
       cg.whatIf = { shoe: [...cg.shoe], player: [...h.cards], dealer: [...cg.dealer], bet: h.bet, taken: action, correct: best ? best.a : action, canSurrender };
     }
+    cg.preShoe = [...cg.shoe]; cg.preTotal = handTotal(h.cards).total;
     if (best && chosen) {
       const gave = Math.max(0, (best.ev - chosen.ev)) * h.bet;
       setCs((p) => ({ ...p, decisions: p.decisions + 1, followed: p.followed + (action === best.a ? 1 : 0), evGiven: p.evGiven + gave }));
@@ -764,7 +777,7 @@ function CoachTable({ balance, setBalance }) {
   const best = adv[0];
   const cSurrHand = cq.phase === "done" ? cq.hands.find((h) => h.surrendered) : null;
   const cAllBusted = cq.phase === "done" && cq.hands.length > 0 && !cSurrHand && cq.hands.every((h) => handTotal(h.cards).total > 21);
-  const cGhost = cq.phase === "done" && (cAllBusted || cSurrHand) && cq.dealer.length >= 2 ? ghostDealerPlayout(cq.dealer, cq.shoe) : null;
+  const cGhost = cq.phase === "done" && (cAllBusted || cSurrHand) && cq.dealer.length >= 2 ? ghostDealerPlayout(cq.dealer, (cAllBusted && cq.preShoe) || cq.shoe) : null;
   const play = cq.phase === "player" && active ? getPlay(active.cards, dUp, aCanDouble, aCanSplit, tcFloor, true, aCanSurr) : null;
   const countFlip = best && play && play.move !== best.a;
   const followRate = cs.decisions ? Math.round((cs.followed / cs.decisions) * 100) : 0;
@@ -774,7 +787,10 @@ function CoachTable({ balance, setBalance }) {
     <div>
       <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
         <div className="text-xs" style={{ color: C.sub }}>The coach speaks <b style={{ color: C.gold }}>before</b> you act — every legal move, priced. {RULES.name} · {RULES.shortLabel}</div>
-        <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none" style={{ color: C.sub }}><input type="checkbox" checked={hideC} onChange={(e) => setHideC(e.target.checked)} />Hide count</label>
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none" style={{ color: C.sub }}><input type="checkbox" checked={hideC} onChange={(e) => setHideC(e.target.checked)} />Hide count</label>
+          <button onClick={() => { setCq(INIT_G); setCs({ ...COACH_INIT_CS }); setClog([]); setBetAmt(0); setBalance(RULES.startingBalance); try { localStorage.removeItem(COACH_LS); } catch {} }} style={{ padding: "4px 10px", borderRadius: 8, border: `1px solid ${C.border}`, background: "transparent", color: C.sub, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Reset session</button>
+        </div>
       </div>
 
       <div className="rounded-xl p-3 mb-3 flex items-center justify-between flex-wrap gap-2" style={{ background: C.panel, border: `1px solid ${C.gold}` }}>
@@ -786,6 +802,7 @@ function CoachTable({ balance, setBalance }) {
       <div>
         {/* felt */}
         <div className={"rounded-2xl p-4 mb-3 felt" + (cq.phase === "done" ? (cq.roundNet > 0 ? " won" : cq.roundNet < 0 ? " lost" : "") : "")}>
+          {cq.phase === "done" && cq.roundNet > 0 && <WinFlash key={cs.hands} net={cq.roundNet} blackjack={cq.message.startsWith("Blackjack")} />}
           <div className="text-center mb-2" style={{ color: "rgba(255,255,255,.35)", fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" }}>{RULES.name} · {fmtMoney(RULES.tableMin)} min · 3:2</div>
           <div className="flex items-center gap-2 mb-1 flex-wrap"><span className="text-xs" style={{ color: "rgba(255,255,255,.6)" }}>Dealer</span>{cq.dealerRevealed && cq.dealer.length > 0 && <span className="mono text-xs" style={{ color: "#fff", fontWeight: 700 }}>{totalStr(cq.dealer)}</span>}{cGhost && <span className="mono text-xs" style={{ color: "#ffe9a8", fontStyle: "italic" }}>→ would've {cGhost.total > 21 ? "BUSTED" : cGhost.draws.length ? "made " + cGhost.total : "stood on " + cGhost.total}</span>}</div>
           <div className="flex gap-2 mb-1" style={{ flexWrap: "wrap", minHeight: 62 }}>
@@ -805,9 +822,9 @@ function CoachTable({ balance, setBalance }) {
           </div>
           <div className="mb-3">{cGhost && (
             <span className="text-xs" style={{ color: "rgba(255,255,255,.55)", fontStyle: "italic" }}>
-              {cSurrHand ? "hole card + draws shown for training — not counted" : "would-be draws shown for training — not counted"}
+              {cSurrHand ? "hole card + draws shown for training — not counted" : "replay from before your bust card — it goes to the dealer here · not counted"}
               {cSurrHand && <> · standing pat, your {handTotal(cSurrHand.cards).total} would have <b style={{ color: cGhost.total > 21 || handTotal(cSurrHand.cards).total > cGhost.total ? "#7ce3b1" : handTotal(cSurrHand.cards).total === cGhost.total ? "#ffe9a8" : "#ffb3bd" }}>{cGhost.total > 21 || handTotal(cSurrHand.cards).total > cGhost.total ? "WON" : handTotal(cSurrHand.cards).total === cGhost.total ? "PUSHED" : "LOST"}</b></>}
-              {cAllBusted && cGhost.total > 21 && <> · the dealer was going to bust — <b style={{ color: "#ffe9a8" }}>standing pat would have won</b></>}
+              {cAllBusted && cq.hands.length === 1 && cq.preTotal && <> · standing on your {cq.preTotal}, you'd have <b style={{ color: cGhost.total > 21 || cq.preTotal > cGhost.total ? "#7ce3b1" : cq.preTotal === cGhost.total ? "#ffe9a8" : "#ffb3bd" }}>{cGhost.total > 21 || cq.preTotal > cGhost.total ? "WON" : cq.preTotal === cGhost.total ? "PUSHED" : "lost anyway"}</b></>}
             </span>
           )}</div>
           <div className="text-xs mb-1" style={{ color: "rgba(255,255,255,.6)" }}>You{cq.hands.length > 1 ? ` · ${cq.hands.length} hands` : ""}</div>
@@ -907,9 +924,17 @@ function CoachTable({ balance, setBalance }) {
         </div>
       </div>
 
-      {/* right column: session ledger */}
+      {/* right column: live feedback first (beside the table), ledger below */}
       <div className="game-side">
         {cq.phase === "done" && <div className="mb-3" style={{ marginTop: -12 }}><WhatIf snap={cq.whatIf} actualNet={cq.roundNet} /></div>}
+        {clog.length > 0 && (
+          <div className="mb-3">
+            <div className="text-xs mb-1" style={{ color: C.sub }}>Recent decisions vs coach:</div>
+            <div className="rounded-lg p-2" style={{ background: C.panel2, border: `1px solid ${C.border}` }}>
+              {clog.map((l, i) => <div key={i} className="flex items-center gap-2 text-xs py-0.5"><span style={{ color: l.you === l.best ? C.split : C.stand, fontWeight: 800, width: 14 }}>{l.you === l.best ? "✓" : "✗"}</span><span className="mono" style={{ color: C.ink }}>{l.txt}</span><span style={{ color: C.sub }}>you {MOVE[l.you].label}</span>{l.you !== l.best && <span style={{ color: C.stand }}>coach {MOVE[l.best].label} ({fmtMoney(Math.abs(l.cost))} EV)</span>}</div>)}
+            </div>
+          </div>
+        )}
         <div className="rounded-xl p-3 mb-2" style={{ background: C.panel, border: `1px solid ${C.gold}` }}>
           <div className="text-xs mb-1" style={{ color: C.sub }}>EV you gave up by overriding the coach</div>
           <div className="flex items-end gap-2"><span className="mono" style={{ color: cs.evGiven > 0 ? C.stand : C.split, fontSize: 22, fontWeight: 700, lineHeight: 1 }}>{fmtMoney(cs.evGiven)}</span><span className="text-xs" style={{ color: C.sub, paddingBottom: 2 }}>expected cost of off-chart moves</span></div>
@@ -925,19 +950,27 @@ function CoachTable({ balance, setBalance }) {
             <b style={{ color: C.stand }}>Pattern flagged:</b> you've raised after a loss {cs.lossChases}×. Loss-chasing is the single most reliable tilt marker in the gambling-behavior literature, and mathematically it buys nothing — rounds are independent, so a progression only concentrates your losses into rarer, bigger ones. The evidence-backed fix is <i>pre-commitment</i>: fix the count ramp before the session and let it, not the last hand, size every bet.
           </div>
         )}
-        {clog.length > 0 && (
-          <div className="mb-3">
-            <div className="text-xs mb-1" style={{ color: C.sub }}>Recent decisions vs coach:</div>
-            <div className="rounded-lg p-2" style={{ background: C.panel2, border: `1px solid ${C.border}` }}>
-              {clog.map((l, i) => <div key={i} className="flex items-center gap-2 text-xs py-0.5"><span style={{ color: l.you === l.best ? C.split : C.stand, fontWeight: 800, width: 14 }}>{l.you === l.best ? "✓" : "✗"}</span><span className="mono" style={{ color: C.ink }}>{l.txt}</span><span style={{ color: C.sub }}>you {MOVE[l.you].label}</span>{l.you !== l.best && <span style={{ color: C.stand }}>coach {MOVE[l.best].label} ({fmtMoney(Math.abs(l.cost))} EV)</span>}</div>)}
-            </div>
-          </div>
-        )}
         <div className="rounded-lg p-3 text-xs" style={{ background: C.panel2, border: `1px solid ${C.border}`, color: C.sub }}>
           <b style={{ color: C.gold }}>Where these numbers come from:</b> exact expected values for every action, computed by dynamic programming for these rules ({RULES.decks}-deck, dealer stands on all 17s, dealer peeks — conditioned on no dealer blackjack), the same method behind published basic-strategy tables since Baldwin et&nbsp;al. (1956) and Griffin's <i>Theory of Blackjack</i>. The ± swing is the standard deviation of each action's outcome — a typical hand runs ~±1.1&nbsp;units (Griffin/Schlesinger), doubles ~±1.9, splits more. "Costs ¢/$" is the EV you give up versus the coach's line; the count overlay flags Illustrious-18 / Fab-4 flips. Details in STRATEGY.md.
         </div>
       </div>
       </div>
+    </div>
+  );
+}
+
+/* --------------------- win celebration overlay --------------------- */
+const CONFETTI_COLORS = ["#e8b64c", "#34d399", "#38bdf8", "#fb5b6b", "#a78bfa", "#f7f7f2"];
+function WinFlash({ net, blackjack }) {
+  const bits = Array.from({ length: 14 }, (_, i) => {
+    const ang = (i / 14) * Math.PI * 2 + (i % 3) * 0.35;
+    const dist = 70 + (i % 5) * 26;
+    return { dx: Math.cos(ang) * dist, dy: Math.sin(ang) * dist - 30, color: CONFETTI_COLORS[i % CONFETTI_COLORS.length], delay: (i % 4) * 70 };
+  });
+  return (
+    <div className="win-flash">
+      {bits.map((b, i) => <span key={i} className="confetti" style={{ background: b.color, "--dx": b.dx + "px", "--dy": b.dy + "px", animationDelay: b.delay + "ms" }} />)}
+      <span className="win-text">{blackjack ? "BLACKJACK!" : `WIN ${fmtSigned(net)}`}</span>
     </div>
   );
 }

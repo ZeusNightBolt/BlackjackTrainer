@@ -124,7 +124,10 @@ export const edgePct = (tc) => 0.5 * tc - 0.5;
 export function suggestedUnits(tc) { const f = Math.floor(tc); if (f <= 1) return 1; if (f === 2) return 2; if (f === 3) return 4; if (f === 4) return 6; if (f === 5) return 8; return 12; }
 
 /* ------------------------------ round engine ------------------------------ */
-export const INIT_G = { phase: "idle", shoe: [], hands: [], dealer: [], log: [], dealerRevealed: false, active: 0, message: "", roundNet: 0, roundFlawedWon: 0, rc: 0, bet: 1, insNet: 0, coach: null, shuffled: false, whatIf: null };
+/* preShoe/preTotal: the shoe and the acting hand's total captured immediately BEFORE the most
+   recent player action. When every hand busts, the correct "had you stood" replay deals the
+   dealer from THIS shoe — so the card that busted you is the dealer's first draw. */
+export const INIT_G = { phase: "idle", shoe: [], hands: [], dealer: [], log: [], dealerRevealed: false, active: 0, message: "", roundNet: 0, roundFlawedWon: 0, rc: 0, bet: 1, insNet: 0, coach: null, shuffled: false, whatIf: null, preShoe: null, preTotal: null };
 export function finalizeOpening(cg) {
   const du = cg.dealer[0], dh = cg.dealer[1], dUp = baseVal(du);
   const peeks = RULES.peek && (dUp === 11 || dUp === 10);
