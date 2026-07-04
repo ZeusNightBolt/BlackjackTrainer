@@ -14,8 +14,8 @@ export { BUST };
 export const rnd = (n) => Math.floor(Math.random() * n);
 export const pick = (a) => a[rnd(a.length)];
 export const signed = (n) => (n >= 0 ? "+" : "") + n;
-export function fmtMoney(n) { const v = Math.round(n * 100) / 100; const s = Number.isInteger(v) ? v.toString() : v.toFixed(2); return "$" + s; }
-export function fmtSigned(n) { const v = Math.round(n * 100) / 100; const sign = v > 0 ? "+" : v < 0 ? "-" : ""; const abs = Math.abs(v); const s = Number.isInteger(abs) ? abs.toString() : abs.toFixed(2); return sign + "$" + s; }
+export function fmtMoney(n) { const v = Math.round(n * 100) / 100; return "$" + v.toLocaleString("en-US", { maximumFractionDigits: 2 }); }
+export function fmtSigned(n) { const v = Math.round(n * 100) / 100; const sign = v > 0 ? "+" : v < 0 ? "-" : ""; return sign + "$" + Math.abs(v).toLocaleString("en-US", { maximumFractionDigits: 2 }); }
 
 /* ------------------------------ cards ------------------------------ */
 export const SUITS = [{ s: "♠", red: false }, { s: "♣", red: false }, { s: "♥", red: true }, { s: "♦", red: true }];

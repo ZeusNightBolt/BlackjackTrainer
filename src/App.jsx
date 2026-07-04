@@ -140,7 +140,7 @@ function loadSaved() { try { return JSON.parse(localStorage.getItem(LS_KEY)) || 
 const SAVED = loadSaved();
 
 export default function App() {
-  const [tab, setTab] = useState("learn");
+  const [tab, setTab] = useState("coach");
   const [ruleSet, setRuleSet] = useState("american");
   const [drillMode, setDrillMode] = useState("cards");
   const [cats, setCats] = useState({ hard: true, soft: true, pairs: true });
@@ -287,6 +287,12 @@ export default function App() {
   const flawedRate = agg.flawedHands ? Math.round((agg.flawedWon / agg.flawedHands) * 100) : 0;
 
   const tabBtn = (id, txt) => <button onClick={() => setTab(id)} style={{ padding: "8px 14px", borderRadius: 999, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 13, background: tab === id ? C.gold : "transparent", color: tab === id ? "#0a0e0c" : C.sub }}>{txt}</button>;
+  // rule-set switch lives with the content it affects (Chart + Flashcards), not the global header
+  const ruleToggle = (
+    <div className="flex rounded-full p-1" style={{ background: C.panel2, border: `1px solid ${C.border}`, width: "fit-content" }}>
+      {["american", "european"].map((r) => <button key={r} onClick={() => setRuleSet(r)} style={{ padding: "5px 11px", borderRadius: 999, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700, textTransform: "capitalize", background: ruleSet === r ? C.felt : "transparent", color: ruleSet === r ? "#fff" : C.sub }}>{r}</button>)}
+    </div>
+  );
   const catBtn = (id, txt) => <button onClick={() => setCats((p) => { const n = { ...p, [id]: !p[id] }; return (!n.hard && !n.soft && !n.pairs) ? p : n; })} style={{ padding: "5px 11px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700, border: `1px solid ${cats[id] ? C.split : C.border}`, background: cats[id] ? "rgba(52,211,153,.14)" : "transparent", color: cats[id] ? C.split : C.sub }}>{txt}</button>;
   const fcButtons = sc ? (sc.isPair ? ["H", "S", "D", "P"] : ["H", "S", "D"]) : [];
   const toggle = (on, set, txt) => <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none" style={{ color: C.sub }}><input type="checkbox" checked={on} onChange={(e) => set(e.target.checked)} />{txt}</label>;
@@ -304,9 +310,10 @@ export default function App() {
   const gGhost = g.phase === "done" && (gAllBusted || gSurrHand) && g.dealer.length >= 2 ? ghostDealerPlayout(g.dealer, (gAllBusted && g.preShoe) || g.shoe) : null;
 
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, color: C.ink, fontFamily: "'Space Grotesk',system-ui,sans-serif" }}>
+    <div style={{ minHeight: "100dvh", background: C.bg, color: C.ink, fontFamily: "'Space Grotesk',system-ui,sans-serif" }}>
       <style>{`
         :root{color-scheme:dark;} *{box-sizing:border-box;}
+        html{overscroll-behavior-y:contain;-webkit-text-size-adjust:100%;}
         button{touch-action:manipulation;-webkit-tap-highlight-color:transparent;user-select:none;}
         button:active{transform:translateY(1px);} button:disabled{cursor:not-allowed;}
         button:focus-visible{outline:2px solid ${C.gold};outline-offset:2px;}
@@ -341,33 +348,41 @@ export default function App() {
         .chip-btn::before{content:"";position:absolute;inset:5px;border-radius:50%;border:2px dashed rgba(255,255,255,.5);}
         .chip-btn.sel{transform:translateY(-3px);box-shadow:0 6px 12px rgba(0,0,0,.55), inset 0 -2px 4px rgba(0,0,0,.35), inset 0 2px 3px rgba(255,255,255,.2), 0 0 0 3px ${C.gold};}
         .chip-btn:disabled{opacity:.45;transform:none;}
-        /* --- felt --- */
-        .felt{position:relative;background:radial-gradient(ellipse at 50% 30%, ${C.felt}, ${C.feltDark} 85%);
-          box-shadow:inset 0 0 46px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.05);
-          border:1px solid ${C.border};transition:box-shadow .4s ease, border-color .4s ease;}
-        .felt.won{border-color:${C.split};box-shadow:inset 0 0 46px rgba(0,0,0,.45), 0 0 18px rgba(52,211,153,.28);}
-        .felt.lost{border-color:${C.stand};box-shadow:inset 0 0 46px rgba(0,0,0,.45), 0 0 18px rgba(251,91,107,.25);}
+        /* --- felt: casino table top with a wooden rail --- */
+        .felt{position:relative;isolation:isolate;background:radial-gradient(ellipse at 50% 30%, ${C.felt}, ${C.feltDark} 85%);
+          box-shadow:inset 0 0 46px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.05),
+            0 0 0 5px #3a2a1c, 0 0 0 6px rgba(212,160,90,.35), 0 8px 22px rgba(0,0,0,.5);
+          border:1px solid rgba(255,255,255,.08);transition:box-shadow .4s ease, border-color .4s ease;}
+        .felt.won{box-shadow:inset 0 0 46px rgba(0,0,0,.45), 0 0 0 5px #3a2a1c, 0 0 0 6px rgba(212,160,90,.35), 0 0 22px rgba(52,211,153,.4);}
+        .felt.lost{box-shadow:inset 0 0 46px rgba(0,0,0,.45), 0 0 0 5px #3a2a1c, 0 0 0 6px rgba(212,160,90,.35), 0 0 22px rgba(251,91,107,.35);}
+        /* --- betting-circle chip stack --- */
+        .chip-disc{position:absolute;left:50%;transform:translateX(-50%);width:44px;height:44px;border-radius:50%;
+          box-shadow:0 2px 4px rgba(0,0,0,.5), inset 0 -2px 3px rgba(0,0,0,.35), inset 0 2px 2px rgba(255,255,255,.22);
+          display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:10px;text-shadow:0 1px 2px rgba(0,0,0,.6);}
+        .chip-disc::before{content:"";position:absolute;inset:4px;border-radius:50%;border:2px dashed rgba(255,255,255,.45);}
         /* --- sticky thumb-reach action bar on phones --- */
         @media(max-width:859px){
           .action-dock{position:sticky;bottom:0;z-index:15;margin:0 -16px;padding:10px 16px calc(10px + env(safe-area-inset-bottom));
             background:linear-gradient(to top, ${C.bg} 72%, rgba(10,14,12,0));}
         }
         .act-btn{min-height:52px;}
+        /* --- compact phone layout (iPhone Safari first) --- */
+        @media(max-width:640px){
+          .tagline{display:none;}
+          .hide-sm{display:none;}
+          .felt{padding:12px 10px;}
+          main{padding-top:10px;}
+        }
         @media(prefers-reduced-motion:reduce){.card-deal,.card-flip,.result-pop,.delta-float,.hand-active{animation:none;}}
       `}</style>
 
       <header className="sticky top-0 z-20" style={{ background: C.panel, borderBottom: `1px solid ${C.border}` }}>
-        <div style={{ maxWidth: 960, margin: "0 auto" }} className="px-4 py-3">
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div>
-              <div className="font-bold tracking-tight" style={{ fontSize: 18 }}><span style={{ color: C.gold }}>21</span> · Strategy &amp; Counting Trainer</div>
-              <div className="text-xs" style={{ color: C.sub }}>Learn the chart, count the shoe, understand every play</div>
-            </div>
-            <div className="flex rounded-full p-1" style={{ background: C.panel2, border: `1px solid ${C.border}` }}>
-              {["american", "european"].map((r) => <button key={r} onClick={() => setRuleSet(r)} style={{ padding: "5px 11px", borderRadius: 999, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700, textTransform: "capitalize", background: ruleSet === r ? C.felt : "transparent", color: ruleSet === r ? "#fff" : C.sub }}>{r}</button>)}
-            </div>
+        <div style={{ maxWidth: 960, margin: "0 auto" }} className="px-4 pt-2 pb-1.5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="font-bold tracking-tight" style={{ fontSize: 17 }}><span style={{ color: C.gold }}>21</span> · Blackjack Trainer</div>
+            <div className="text-xs tagline" style={{ color: C.sub }}>Play, count, understand every move</div>
           </div>
-          <div className="flex gap-1 mt-2">{tabBtn("learn", "Learn")}{tabBtn("chart", "Chart")}{tabBtn("drill", "Drill")}{tabBtn("coach", "Coach Me")}</div>
+          <div className="flex gap-1 mt-1.5">{tabBtn("coach", "Coach Me")}{tabBtn("drill", "Drill")}{tabBtn("chart", "Chart")}{tabBtn("learn", "Learn")}</div>
         </div>
       </header>
 
@@ -389,7 +404,8 @@ export default function App() {
         {/* ------------------------- CHART ------------------------- */}
         {tab === "chart" && (
           <div style={{ maxWidth: 720, margin: "0 auto" }}>
-            <div className="text-sm mb-3" style={{ color: C.ink }}>Rows = your hand, columns = the dealer's up card. The chart is the optimal response to how often the dealer busts — here's that bust rate, the engine underneath every cell:</div>
+            <div className="flex items-center justify-between gap-2 mb-2 flex-wrap"><div className="text-sm" style={{ color: C.ink }}>Rows = your hand, columns = the dealer's up card.</div>{ruleToggle}</div>
+            <div className="text-sm mb-3" style={{ color: C.ink }}>The chart is the optimal response to how often the dealer busts — here's that bust rate, the engine underneath every cell:</div>
             <DealerBustStrip />
             <div className="text-xs mb-4 rounded-lg p-3" style={{ background: C.panel, border: `1px solid ${C.border}`, color: C.sub }}>See the cliff: a <b style={{ color: C.split }}>6 busts ~{BUST["6"]}%</b>, a <b style={{ color: C.stand }}>7 only ~{BUST["7"]}%</b>. That {BUST["6"] - BUST["7"]}-point drop is why most stand/hit decisions flip between the dealer's 6 and 7. <span>({RULES.decks} decks, dealer stands on all 17s — computed from this table's own dealer model.)</span></div>
             <div className="text-xs mb-2" style={{ color: C.sub }}>Tap any cell to see <i>why</i>.</div>
@@ -421,7 +437,7 @@ export default function App() {
               <div>
                 <div className="text-xs mb-3" style={{ color: C.sub }}>One decision at a time — pure basic strategy reps to burn the chart into memory.</div>
                 <div className="grid grid-cols-3 gap-2 mb-3"><Stat label="Accuracy" value={`${acc}%`} sub={`${stats.correct}/${stats.total}`} color={C.gold} /><Stat label="Streak" value={stats.streak} sub={`best ${stats.best}`} color={C.split} /><Stat label="Playing" value={sc.dealer} sub="dealer shows" color={C.double} /></div>
-                <div className="flex items-center justify-between mb-3 flex-wrap gap-2"><div className="flex gap-1.5">{catBtn("hard", "Hard")}{catBtn("soft", "Soft")}{catBtn("pairs", "Pairs")}</div>{toggle(auto, setAuto, "Auto-deal on correct")}</div>
+                <div className="flex items-center justify-between mb-3 flex-wrap gap-2"><div className="flex gap-1.5 items-center flex-wrap">{catBtn("hard", "Hard")}{catBtn("soft", "Soft")}{catBtn("pairs", "Pairs")}{ruleToggle}</div>{toggle(auto, setAuto, "Auto-deal on correct")}</div>
                 <div key={`${stats.total}-${sc.label}-${sc.dealer}`} className="rounded-2xl p-4 mb-3 felt">
                   <div className="text-xs mb-1" style={{ color: "rgba(255,255,255,.6)" }}>Dealer</div>
                   <div className="flex gap-2 mb-4"><PlayingCard card={sc.dealerCard} anim="deal" /><PlayingCard hidden anim="deal" delay={340} /></div>
@@ -508,8 +524,9 @@ export default function App() {
 
                 {/* felt */}
                 <div className={"rounded-2xl p-4 mb-3 felt" + (g.phase === "done" ? (g.roundNet > 0 ? " won" : g.roundNet < 0 ? " lost" : "") : "")}>
+                  <FeltMarkings />
                   {g.phase === "done" && g.roundNet > 0 && <WinFlash key={agg.rounds} net={g.roundNet} blackjack={g.message.startsWith("Blackjack")} />}
-                  <div className="text-center mb-2" style={{ color: "rgba(255,255,255,.35)", fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" }}>{RULES.name} · {fmtMoney(RULES.tableMin)} min · 3:2</div>
+                  <div className="text-center mb-2" style={{ color: "rgba(255,255,255,.35)", fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", position: "relative" }}>{RULES.name} · {fmtMoney(RULES.tableMin)} min</div>
                   <div className="flex items-center gap-2 mb-1 flex-wrap"><span className="text-xs" style={{ color: "rgba(255,255,255,.6)" }}>Dealer</span>{g.dealerRevealed && g.dealer.length > 0 && <span className="mono text-xs" style={{ color: handTotal(g.dealer).total > 21 ? "#ffd7d7" : "#fff", fontWeight: 700 }}>{totalStr(g.dealer)}</span>}{gGhost && <span className="mono text-xs" style={{ color: "#ffe9a8", fontStyle: "italic" }}>→ would've {gGhost.total > 21 ? "BUSTED" : gGhost.draws.length ? "made " + gGhost.total : "stood on " + gGhost.total}</span>}</div>
                   <div className="flex gap-2 mb-1" style={{ flexWrap: "wrap" }}>
                     {g.dealer.length === 0 ? <span className="text-xs" style={{ color: "rgba(255,255,255,.5)" }}>—</span> :
@@ -661,6 +678,13 @@ export default function App() {
    suboptimal line and the volatility (SD) of the action's outcome.
    EV/SD from src/evdata.js (see STRATEGY.md §7 for method + literature). */
 const evc = (ev) => (ev >= 0 ? "+" : "−") + Math.abs(ev * 100).toFixed(1) + "¢";
+/* greedy chip decomposition for the betting-circle stack (display only, max 6 discs) */
+function chipStack(amount) {
+  const out = [];
+  let rem = amount;
+  for (const c of [...CHIPS].sort((a, b) => b - a)) while (rem >= c && out.length < 6) { out.push(c); rem -= c; }
+  return out.reverse(); // biggest chips at the bottom of the stack
+}
 const COACH_LS = "bjt-coach-v2";
 function loadCoachSaved() { try { return JSON.parse(localStorage.getItem(COACH_LS)) || {}; } catch { return {}; } }
 const COACH_INIT_CS = { hands: 0, decisions: 0, followed: 0, evGiven: 0, bets: 0, aligned: 0, lossChases: 0, winPresses: 0, base: null, lastBet: null, lastNet: null };
@@ -785,25 +809,32 @@ function CoachTable({ balance, setBalance }) {
   const barW = (ev) => Math.max(4, Math.min(100, ((ev + 1) / 2) * 100));
   return (
     <div>
-      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-        <div className="text-xs" style={{ color: C.sub }}>The coach speaks <b style={{ color: C.gold }}>before</b> you act — every legal move, priced. {RULES.name} · {RULES.shortLabel}</div>
-        <div className="flex items-center gap-3">
-          <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none" style={{ color: C.sub }}><input type="checkbox" checked={hideC} onChange={(e) => setHideC(e.target.checked)} />Hide count</label>
-          <button onClick={() => { setCq(INIT_G); setCs({ ...COACH_INIT_CS }); setClog([]); setBetAmt(0); setBalance(RULES.startingBalance); try { localStorage.removeItem(COACH_LS); } catch {} }} style={{ padding: "4px 10px", borderRadius: 8, border: `1px solid ${C.border}`, background: "transparent", color: C.sub, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Reset session</button>
+      <div className="rounded-xl p-3 mb-2" style={{ background: C.panel, border: `1px solid ${C.gold}` }}>
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div><div className="text-xs" style={{ color: C.sub }}>Balance</div><div className="mono" style={{ fontSize: 20, fontWeight: 700, color: balance >= STARTING_BALANCE ? C.split : C.ink }}>{fmtMoney(balance)}</div></div>
+          {!hideC && <div className="flex gap-4"><MiniStat label="Running" value={signed(cq.rc)} color={C.ink} /><MiniStat label="True" value={cq.shoe.length ? signed(Math.round(tc * 10) / 10) : "0"} color={tc >= 2 ? C.split : C.ink} /><MiniStat label="Decks" value={cq.shoe.length ? decksRem.toFixed(1) : RULES.decks.toFixed(1)} color={C.sub} /></div>}
         </div>
-      </div>
-
-      <div className="rounded-xl p-3 mb-3 flex items-center justify-between flex-wrap gap-2" style={{ background: C.panel, border: `1px solid ${C.gold}` }}>
-        <div><div className="text-xs" style={{ color: C.sub }}>Balance</div><div className="mono" style={{ fontSize: 20, fontWeight: 700, color: balance >= STARTING_BALANCE ? C.split : C.ink }}>{fmtMoney(balance)}</div></div>
-        {!hideC && <div className="flex gap-4"><MiniStat label="Running" value={signed(cq.rc)} color={C.ink} /><MiniStat label="True" value={cq.shoe.length ? signed(Math.round(tc * 10) / 10) : "0"} color={tc >= 2 ? C.split : C.ink} /><MiniStat label="Decks" value={cq.shoe.length ? decksRem.toFixed(1) : RULES.decks.toFixed(1)} color={C.sub} /></div>}
+        <div className="flex items-center justify-between gap-2 mt-2 pt-2 flex-wrap" style={{ borderTop: `1px solid ${C.border}` }}>
+          <span className="text-xs hide-sm" style={{ color: C.sub }}>The coach prices every move <b style={{ color: C.gold }}>before</b> you act · {RULES.shortLabel}</span>
+          <div className="flex items-center gap-3" style={{ marginLeft: "auto" }}>
+            <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none" style={{ color: C.sub }}><input type="checkbox" checked={hideC} onChange={(e) => setHideC(e.target.checked)} />Hide count</label>
+            <button onClick={() => { setCq(INIT_G); setCs({ ...COACH_INIT_CS }); setClog([]); setBetAmt(0); setBalance(RULES.startingBalance); try { localStorage.removeItem(COACH_LS); } catch {} }} style={{ padding: "4px 10px", borderRadius: 8, border: `1px solid ${C.border}`, background: "transparent", color: C.sub, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Reset session</button>
+          </div>
+        </div>
       </div>
 
       <div className="game-grid">
       <div>
         {/* felt */}
+        <div className="flex justify-between text-xs mb-1 px-1" style={{ color: C.sub }}>
+          <span>Shoe · {RULES.decks} decks</span>
+          <span className="mono">{cq.shoe.length ? cq.shoe.length + " cards to the cut" : "fresh shuffle on deal"}</span>
+        </div>
+        <div className="mb-2" style={{ height: 4, borderRadius: 2, background: C.panel2, overflow: "hidden" }}><div style={{ height: "100%", width: `${cq.shoe.length ? Math.round(((SHOE_CARDS - cq.shoe.length) / SHOE_CARDS) * 100) : 0}%`, background: C.felt, transition: "width .4s ease" }} /></div>
         <div className={"rounded-2xl p-4 mb-3 felt" + (cq.phase === "done" ? (cq.roundNet > 0 ? " won" : cq.roundNet < 0 ? " lost" : "") : "")}>
+          <FeltMarkings />
           {cq.phase === "done" && cq.roundNet > 0 && <WinFlash key={cs.hands} net={cq.roundNet} blackjack={cq.message.startsWith("Blackjack")} />}
-          <div className="text-center mb-2" style={{ color: "rgba(255,255,255,.35)", fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" }}>{RULES.name} · {fmtMoney(RULES.tableMin)} min · 3:2</div>
+          <div className="text-center mb-2" style={{ color: "rgba(255,255,255,.35)", fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" }}>{RULES.name} · {fmtMoney(RULES.tableMin)} min</div>
           <div className="flex items-center gap-2 mb-1 flex-wrap"><span className="text-xs" style={{ color: "rgba(255,255,255,.6)" }}>Dealer</span>{cq.dealerRevealed && cq.dealer.length > 0 && <span className="mono text-xs" style={{ color: "#fff", fontWeight: 700 }}>{totalStr(cq.dealer)}</span>}{cGhost && <span className="mono text-xs" style={{ color: "#ffe9a8", fontStyle: "italic" }}>→ would've {cGhost.total > 21 ? "BUSTED" : cGhost.draws.length ? "made " + cGhost.total : "stood on " + cGhost.total}</span>}</div>
           <div className="flex gap-2 mb-1" style={{ flexWrap: "wrap", minHeight: 62 }}>
             {cq.dealer.length === 0 ? <span className="text-xs" style={{ color: "rgba(255,255,255,.5)" }}>—</span> :
@@ -831,10 +862,15 @@ function CoachTable({ balance, setBalance }) {
           <div className="flex gap-3 items-start" style={{ flexWrap: "wrap", minHeight: 70 }}>
             {cq.hands.length === 0 ? (
               <div className="flex items-center gap-3">
-                <div style={{ width: 74, height: 74, borderRadius: "50%", border: "2px dashed rgba(255,255,255,.4)", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column" }}>
-                  <span className="mono" style={{ color: "#fff", fontWeight: 700, fontSize: betAmt >= 1000 ? 12 : 14 }}>{betAmt ? fmtMoney(betAmt) : "BET"}</span>
+                <div style={{ position: "relative", width: 74, height: 92 }}>
+                  <div style={{ position: "absolute", bottom: 0, left: 0, width: 74, height: 74, borderRadius: "50%", border: "2px dashed rgba(255,255,255,.4)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    {!betAmt && <span className="mono" style={{ color: "rgba(255,255,255,.7)", fontWeight: 700, fontSize: 13 }}>BET</span>}
+                  </div>
+                  {chipStack(betAmt).map((c, i, arr) => (
+                    <div key={i} className="chip-disc" style={{ background: CHIP_STYLE[c], bottom: 15 + i * 7, zIndex: i + 1 }}>{i === arr.length - 1 ? "$" + betAmt : ""}</div>
+                  ))}
                 </div>
-                <span className="text-xs" style={{ color: "rgba(255,255,255,.55)", maxWidth: 150 }}>Tap chips below to build your bet, then deal.</span>
+                <span className="text-xs" style={{ color: "rgba(255,255,255,.55)", maxWidth: 150 }}>{betAmt ? `${fmtMoney(betAmt)} in the circle — deal when ready.` : "Tap chips below to build your bet, then deal."}</span>
               </div>
             ) :
               cq.hands.map((h, hi) => { const isActive = cq.phase === "player" && hi === cq.active; const rc = h.result === "win" ? C.split : h.result === "lose" ? C.stand : h.result === "push" ? C.gold : h.result === "surrender" ? C.surrender : "transparent"; return (
@@ -956,6 +992,28 @@ function CoachTable({ balance, setBalance }) {
       </div>
       </div>
     </div>
+  );
+}
+
+/* --------------------- felt table markings --------------------- */
+/* The classic printed arcs on a real layout — pinned to the bottom of the felt,
+   behind the cards (pure decoration, aria-hidden). */
+function FeltMarkings() {
+  return (
+    <svg viewBox="0 0 400 120" preserveAspectRatio="xMidYMax meet" aria-hidden="true"
+      style={{ position: "absolute", left: 0, right: 0, bottom: 4, width: "100%", height: "58%", pointerEvents: "none", opacity: 0.8, zIndex: -1 }}>
+      <defs>
+        <path id="feltArc1" d="M 34 96 A 200 150 0 0 1 366 96" fill="none" />
+        <path id="feltArc2" d="M 62 112 A 175 130 0 0 1 338 112" fill="none" />
+      </defs>
+      <use href="#feltArc1" stroke="rgba(255,233,168,.22)" strokeWidth="1" />
+      <text fontSize="13" fontWeight="700" letterSpacing="4" fill="rgba(255,233,168,.5)" fontFamily="Georgia,serif">
+        <textPath href="#feltArc1" startOffset="50%" textAnchor="middle">BLACKJACK PAYS 3 TO 2</textPath>
+      </text>
+      <text fontSize="7.5" letterSpacing="2.5" fill="rgba(255,255,255,.32)">
+        <textPath href="#feltArc2" startOffset="50%" textAnchor="middle">DEALER MUST STAND ON ALL 17s · INSURANCE PAYS 2 TO 1</textPath>
+      </text>
+    </svg>
   );
 }
 
