@@ -127,7 +127,7 @@ function buildScenario(ruleSet, cats) {
 }
 
 /* =============================== APP =============================== */
-const INIT_AGG = { rounds: 0, handsWon: 0, handsLost: 0, handsPush: 0, decisions: 0, correct: 0, flawedHands: 0, flawedWon: 0, net: 0, countDecisions: 0, countCorrect: 0 };
+const INIT_AGG = { rounds: 0, handsWon: 0, handsLost: 0, handsPush: 0, decisions: 0, correct: 0, flawedHands: 0, flawedWon: 0, net: 0, countDecisions: 0, countCorrect: 0, recent: [] };
 const CUT = RULES.cutCards;
 const STARTING_BALANCE = RULES.startingBalance;
 const CHIPS = RULES.chips;
@@ -203,7 +203,7 @@ export default function App() {
     const S = finalizeOpening(cg);
     setG(cg);
     if (S) {
-      setAgg((a) => ({ ...a, rounds: a.rounds + 1, handsWon: a.handsWon + S.won, handsLost: a.handsLost + S.lost, handsPush: a.handsPush + S.push, net: a.net + S.net }));
+      setAgg((a) => ({ ...a, rounds: a.rounds + 1, handsWon: a.handsWon + S.won, handsLost: a.handsLost + S.lost, handsPush: a.handsPush + S.push, net: a.net + S.net, recent: pushRecent(a.recent, S.net) }));
       setBalance((b) => Math.round((b + S.net) * 100) / 100);
     }
   }
@@ -221,7 +221,7 @@ export default function App() {
     setG(cg);
     setAgg((a) => {
       const na = { ...a, countDecisions: a.countDecisions + 1, countCorrect: a.countCorrect + (insOK ? 1 : 0) };
-      if (S) { na.rounds += 1; na.handsWon += S.won; na.handsLost += S.lost; na.handsPush += S.push; na.net += S.net; }
+      if (S) { na.rounds += 1; na.handsWon += S.won; na.handsLost += S.lost; na.handsPush += S.push; na.net += S.net; na.recent = pushRecent(a.recent, S.net); }
       return na;
     });
     if (S) setBalance((b) => Math.round((b + S.net) * 100) / 100);
@@ -275,7 +275,7 @@ export default function App() {
     setAgg((a) => {
       const na = { ...a, decisions: a.decisions + 1, correct: a.correct + (ok ? 1 : 0) };
       if (play.isDeviation) { na.countDecisions = a.countDecisions + 1; na.countCorrect = a.countCorrect + (ok ? 1 : 0); }
-      if (S) { na.rounds += 1; na.handsWon += S.won; na.handsLost += S.lost; na.handsPush += S.push; na.flawedHands += S.flawed; na.flawedWon += S.flawedWon; na.net += S.net; }
+      if (S) { na.rounds += 1; na.handsWon += S.won; na.handsLost += S.lost; na.handsPush += S.push; na.flawedHands += S.flawed; na.flawedWon += S.flawedWon; na.net += S.net; na.recent = pushRecent(a.recent, S.net); }
       return na;
     });
     if (S) setBalance((b) => Math.round((b + S.net) * 100) / 100);
@@ -525,8 +525,9 @@ export default function App() {
                 {/* felt */}
                 <div className={"rounded-2xl p-4 mb-3 felt" + (g.phase === "done" ? (g.roundNet > 0 ? " won" : g.roundNet < 0 ? " lost" : "") : "")}>
                   <FeltMarkings />
+                  <LastHands recent={agg.recent} />
                   {g.phase === "done" && g.roundNet > 0 && <WinFlash key={agg.rounds} net={g.roundNet} blackjack={g.message.startsWith("Blackjack")} />}
-                  <div className="text-center mb-2" style={{ color: "rgba(255,255,255,.35)", fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", position: "relative" }}>{RULES.name} · {fmtMoney(RULES.tableMin)} min</div>
+                  <div className="mb-2" style={{ color: "rgba(255,255,255,.35)", fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" }}>{RULES.name}<span className="hide-sm"> · {fmtMoney(RULES.tableMin)} min</span></div>
                   <div className="flex items-center gap-2 mb-1 flex-wrap"><span className="text-xs" style={{ color: "rgba(255,255,255,.6)" }}>Dealer</span>{g.dealerRevealed && g.dealer.length > 0 && <span className="mono text-xs" style={{ color: handTotal(g.dealer).total > 21 ? "#ffd7d7" : "#fff", fontWeight: 700 }}>{totalStr(g.dealer)}</span>}{gGhost && <span className="mono text-xs" style={{ color: "#ffe9a8", fontStyle: "italic" }}>→ would've {gGhost.total > 21 ? "BUSTED" : gGhost.draws.length ? "made " + gGhost.total : "stood on " + gGhost.total}</span>}</div>
                   <div className="flex gap-2 mb-1" style={{ flexWrap: "wrap" }}>
                     {g.dealer.length === 0 ? <span className="text-xs" style={{ color: "rgba(255,255,255,.5)" }}>—</span> :
@@ -577,7 +578,7 @@ export default function App() {
                       <button onClick={() => playerAct("R")} style={{ width: "100%", padding: "10px 0", borderRadius: 12, border: `1px solid ${C.surrender}`, cursor: "pointer", background: "rgba(167,139,250,.08)", color: C.surrender, fontWeight: 800, fontSize: 13, marginBottom: 8 }}>Surrender <span style={{ opacity: .75, fontWeight: 600 }}>— give up half your bet</span></button>
                     )}
                     <div className="grid grid-cols-4 gap-2">
-                      {[["H", gCanHit], ["S", gCanHit], ["D", gCanDouble], ["P", gCanSplit]].map(([k, on]) => <button key={k} className="act-btn" disabled={!on} onClick={() => playerAct(k)} style={{ padding: "14px 0", borderRadius: 12, fontWeight: 800, fontSize: 14, color: "#0a0e0c", background: MOVE[k].color, opacity: on ? 1 : 0.28, border: "none", cursor: on ? "pointer" : "not-allowed", boxShadow: on ? "0 2px 6px rgba(0,0,0,.35)" : "none" }}>{MOVE[k].label}</button>)}
+                      {[["S", gCanHit], ["H", gCanHit], ["D", gCanDouble], ["P", gCanSplit]].map(([k, on]) => <button key={k} className="act-btn" disabled={!on} onClick={() => playerAct(k)} style={{ padding: "14px 0", borderRadius: 12, fontWeight: 800, fontSize: 14, color: "#0a0e0c", background: MOVE[k].color, opacity: on ? 1 : 0.28, border: "none", cursor: on ? "pointer" : "not-allowed", boxShadow: on ? "0 2px 6px rgba(0,0,0,.35)" : "none" }}>{MOVE[k].label}</button>)}
                     </div>
                   </div>
                 ) : balance < chipSize ? (
@@ -687,7 +688,7 @@ function chipStack(amount) {
 }
 const COACH_LS = "bjt-coach-v2";
 function loadCoachSaved() { try { return JSON.parse(localStorage.getItem(COACH_LS)) || {}; } catch { return {}; } }
-const COACH_INIT_CS = { hands: 0, decisions: 0, followed: 0, evGiven: 0, bets: 0, aligned: 0, lossChases: 0, winPresses: 0, base: null, lastBet: null, lastNet: null };
+const COACH_INIT_CS = { hands: 0, decisions: 0, followed: 0, evGiven: 0, bets: 0, aligned: 0, lossChases: 0, winPresses: 0, base: null, lastBet: null, lastNet: null, recent: [] };
 function CoachTable({ balance, setBalance }) {
   const [cq, setCq] = useState(INIT_G);
   const [betAmt, setBetAmt] = useState(0);
@@ -716,7 +717,7 @@ function CoachTable({ balance, setBalance }) {
   }
   function settle(S) {
     if (!S) return;
-    setCs((p) => ({ ...p, hands: p.hands + 1, lastNet: S.net }));
+    setCs((p) => ({ ...p, hands: p.hands + 1, lastNet: S.net, recent: pushRecent(p.recent, S.net) }));
     setBalance((b) => Math.round((b + S.net) * 100) / 100);
   }
   function dealCoach() {
@@ -833,8 +834,9 @@ function CoachTable({ balance, setBalance }) {
         <div className="mb-2" style={{ height: 4, borderRadius: 2, background: C.panel2, overflow: "hidden" }}><div style={{ height: "100%", width: `${cq.shoe.length ? Math.round(((SHOE_CARDS - cq.shoe.length) / SHOE_CARDS) * 100) : 0}%`, background: C.felt, transition: "width .4s ease" }} /></div>
         <div className={"rounded-2xl p-4 mb-3 felt" + (cq.phase === "done" ? (cq.roundNet > 0 ? " won" : cq.roundNet < 0 ? " lost" : "") : "")}>
           <FeltMarkings />
+          <LastHands recent={cs.recent} />
           {cq.phase === "done" && cq.roundNet > 0 && <WinFlash key={cs.hands} net={cq.roundNet} blackjack={cq.message.startsWith("Blackjack")} />}
-          <div className="text-center mb-2" style={{ color: "rgba(255,255,255,.35)", fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" }}>{RULES.name} · {fmtMoney(RULES.tableMin)} min</div>
+          <div className="mb-2" style={{ color: "rgba(255,255,255,.35)", fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" }}>{RULES.name}<span className="hide-sm"> · {fmtMoney(RULES.tableMin)} min</span></div>
           <div className="flex items-center gap-2 mb-1 flex-wrap"><span className="text-xs" style={{ color: "rgba(255,255,255,.6)" }}>Dealer</span>{cq.dealerRevealed && cq.dealer.length > 0 && <span className="mono text-xs" style={{ color: "#fff", fontWeight: 700 }}>{totalStr(cq.dealer)}</span>}{cGhost && <span className="mono text-xs" style={{ color: "#ffe9a8", fontStyle: "italic" }}>→ would've {cGhost.total > 21 ? "BUSTED" : cGhost.draws.length ? "made " + cGhost.total : "stood on " + cGhost.total}</span>}</div>
           <div className="flex gap-2 mb-1" style={{ flexWrap: "wrap", minHeight: 62 }}>
             {cq.dealer.length === 0 ? <span className="text-xs" style={{ color: "rgba(255,255,255,.5)" }}>—</span> :
@@ -953,7 +955,7 @@ function CoachTable({ balance, setBalance }) {
           <div>
             {aCanSurr && <button onClick={() => coachAct("R")} style={{ width: "100%", padding: "9px 0", borderRadius: 12, border: `1px solid ${C.surrender}`, cursor: "pointer", background: "rgba(167,139,250,.08)", color: C.surrender, fontWeight: 800, fontSize: 13, marginBottom: 8 }}>Surrender — take half back</button>}
             <div className="grid grid-cols-4 gap-2">
-              {[["H", aCanHit], ["S", aCanHit], ["D", aCanDouble], ["P", aCanSplit]].map(([k, on]) => <button key={k} className="act-btn" disabled={!on} onClick={() => coachAct(k)} style={{ padding: "14px 0", borderRadius: 12, fontWeight: 800, fontSize: 14, color: "#0a0e0c", background: MOVE[k].color, opacity: on ? 1 : 0.28, border: "none", cursor: on ? "pointer" : "not-allowed", outline: best && best.a === k ? `3px solid #fff` : "none", outlineOffset: -3 }}>{MOVE[k].label}</button>)}
+              {[["S", aCanHit], ["H", aCanHit], ["D", aCanDouble], ["P", aCanSplit]].map(([k, on]) => <button key={k} className="act-btn" disabled={!on} onClick={() => coachAct(k)} style={{ padding: "14px 0", borderRadius: 12, fontWeight: 800, fontSize: 14, color: "#0a0e0c", background: MOVE[k].color, opacity: on ? 1 : 0.28, border: "none", cursor: on ? "pointer" : "not-allowed", outline: best && best.a === k ? `3px solid #fff` : "none", outlineOffset: -3 }}>{MOVE[k].label}</button>)}
             </div>
           </div>
         )}
@@ -992,6 +994,21 @@ function CoachTable({ balance, setBalance }) {
       </div>
       </div>
     </div>
+  );
+}
+
+/* --------------------- last-hands W/L strip --------------------- */
+const wlp = (net) => (net > 0 ? "W" : net < 0 ? "L" : "P");
+const pushRecent = (list, net) => [...(list || []), wlp(net)].slice(-7);
+/* Top-right of the felt: the last 7 round results, oldest → newest. */
+function LastHands({ recent }) {
+  if (!recent || recent.length === 0) return null;
+  return (
+    <span className="mono" aria-label="last hands, oldest to newest" style={{ position: "absolute", top: 7, right: 10, fontSize: 10, fontWeight: 800, letterSpacing: 0.5, zIndex: 2, background: "rgba(0,0,0,.25)", borderRadius: 6, padding: "2px 6px" }}>
+      {recent.map((r, i) => (
+        <span key={i} style={{ color: r === "W" ? "#7ce3b1" : r === "L" ? "#ffb3bd" : "#ffe9a8", marginLeft: i ? 4 : 0 }}>{r}</span>
+      ))}
+    </span>
   );
 }
 
