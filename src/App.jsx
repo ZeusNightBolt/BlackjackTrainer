@@ -329,8 +329,8 @@ export default function App() {
         @keyframes popIn{0%{transform:scale(.4);opacity:0;}70%{transform:scale(1.12);}100%{transform:scale(1);opacity:1;}}
         @keyframes floatUp{0%{opacity:0;transform:translateY(4px);}18%{opacity:1;}100%{opacity:0;transform:translateY(-24px);}}
         @keyframes activePulse{0%,100%{outline-color:${C.gold};box-shadow:0 0 10px rgba(232,182,76,.18);}50%{outline-color:#f4cf7d;box-shadow:0 0 20px rgba(232,182,76,.5);}}
-        .card-deal{animation:dealIn .82s cubic-bezier(.2,.8,.3,1.04) both;}
-        .card-flip{animation:flipIn .9s ease-out both;}
+        .card-deal{animation:dealIn 1.05s cubic-bezier(.2,.8,.3,1.03) both;}
+        .card-flip{animation:flipIn 1.15s ease-out both;}
         .result-pop{animation:popIn .42s cubic-bezier(.2,.9,.3,1.4) both;}
         .delta-float{animation:floatUp 1.8s ease-out both;pointer-events:none;}
         .hand-active{animation:activePulse 1.5s ease-in-out infinite;}
@@ -445,9 +445,9 @@ export default function App() {
                 <div className="flex items-center justify-between mb-3 flex-wrap gap-2"><div className="flex gap-1.5 items-center flex-wrap">{catBtn("hard", "Hard")}{catBtn("soft", "Soft")}{catBtn("pairs", "Pairs")}{ruleToggle}</div>{toggle(auto, setAuto, "Auto-deal on correct")}</div>
                 <div key={`${stats.total}-${sc.label}-${sc.dealer}`} className="rounded-2xl p-4 mb-3 felt">
                   <div className="text-xs mb-1" style={{ color: "rgba(255,255,255,.6)" }}>Dealer</div>
-                  <div className="flex gap-2 mb-4"><PlayingCard card={sc.dealerCard} anim="deal" /><PlayingCard hidden anim="deal" delay={460} /></div>
+                  <div className="flex gap-2 mb-4"><PlayingCard card={sc.dealerCard} anim="deal" /><PlayingCard hidden anim="deal" delay={1340} /></div>
                   <div className="text-xs mb-1" style={{ color: "rgba(255,255,255,.6)" }}>You</div>
-                  <div className="flex gap-2">{sc.cards.map((c, i) => <PlayingCard key={i} card={c} anim="deal" delay={860 + i * 460} />)}</div>
+                  <div className="flex gap-2">{sc.cards.map((c, i) => <PlayingCard key={i} card={c} anim="deal" delay={300 + i * 540} />)}</div>
                 </div>
                 <div className="grid gap-2" style={{ gridTemplateColumns: fcButtons.length === 4 ? "1fr 1fr" : "1fr 1fr 1fr" }}>
                   {fcButtons.map((k) => { const chosen = answered && answered.choice === k, right = answered && sc.correct === k; let ring = "transparent"; if (answered) { if (right) ring = C.split; else if (chosen) ring = C.stand; } return <button key={k} onClick={() => answer(k)} style={{ padding: "14px 0", borderRadius: 12, cursor: answered ? "default" : "pointer", fontWeight: 800, fontSize: 15, color: "#0a0e0c", background: MOVE[k].color, opacity: answered && !right && !chosen ? 0.4 : 1, outline: `3px solid ${ring}`, outlineOffset: 2, border: "none" }}>{MOVE[k].label}</button>; })}
@@ -538,16 +538,16 @@ export default function App() {
                     {g.dealer.length === 0 ? <span className="text-xs" style={{ color: "rgba(255,255,255,.5)" }}>—</span> :
                       g.dealerRevealed
                         ? <>
-                            {g.dealer.map((c, i) => <PlayingCard key={i} card={c} small tagVal={showTags ? tag(c) : null} anim={i === 1 ? "flip" : i > 1 ? "deal" : undefined} delay={i > 1 ? (i - 1) * 460 : 0} />)}
-                            {gGhost && gGhost.draws.map((c, i) => <PlayingCard key={"g" + i} card={c} small ghost anim="deal" delay={700 + i * 460} />)}
+                            {g.dealer.map((c, i) => <PlayingCard key={i} card={c} small tagVal={showTags ? tag(c) : null} anim={i === 1 ? "flip" : i > 1 ? "deal" : undefined} delay={i > 1 ? 1000 + (i - 2) * 620 : 0} />)}
+                            {gGhost && gGhost.draws.map((c, i) => <PlayingCard key={"g" + i} card={c} small ghost anim="deal" delay={1000 + i * 620} />)}
                           </>
                         : gGhost
                           ? <>
                               <PlayingCard card={g.dealer[0]} small tagVal={showTags ? tag(g.dealer[0]) : null} />
                               <PlayingCard card={g.dealer[1]} small ghost anim="flip" />
-                              {gGhost.draws.map((c, i) => <PlayingCard key={"g" + i} card={c} small ghost anim="deal" delay={700 + i * 460} />)}
+                              {gGhost.draws.map((c, i) => <PlayingCard key={"g" + i} card={c} small ghost anim="deal" delay={1000 + i * 620} />)}
                             </>
-                          : <><PlayingCard card={g.dealer[0]} small tagVal={showTags ? tag(g.dealer[0]) : null} anim="deal" /><PlayingCard hidden small anim="deal" delay={860} /></>}
+                          : <><PlayingCard card={g.dealer[0]} small tagVal={showTags ? tag(g.dealer[0]) : null} anim="deal" /><PlayingCard hidden small anim="deal" delay={1340} /></>}
                   </div>
                   <div className="mb-3">{gGhost && (
                     <span className="text-xs" style={{ color: "rgba(255,255,255,.55)", fontStyle: "italic" }}>
@@ -561,7 +561,7 @@ export default function App() {
                     {g.hands.length === 0 ? <span className="text-xs" style={{ color: "rgba(255,255,255,.5)" }}>Press Deal to start</span> :
                       g.hands.map((h, hi) => { const isActive = g.phase === "player" && hi === g.active; const rc = h.result === "win" ? C.split : h.result === "lose" ? C.stand : h.result === "push" ? C.gold : h.result === "surrender" ? C.surrender : "transparent"; return (
                         <div key={hi} className={isActive ? "hand-active" : ""} style={{ padding: 6, borderRadius: 10, outline: isActive ? `2px solid ${C.gold}` : h.result ? `2px solid ${rc}` : "2px solid transparent", outlineOffset: 1 }}>
-                          <div className="flex gap-1.5">{h.cards.map((c, i) => <PlayingCard key={i} card={c} small tagVal={showTags ? tag(c) : null} anim="deal" delay={h.cards.length === 2 && i < 2 ? 220 + i * 460 : 0} />)}</div>
+                          <div className="flex gap-1.5">{h.cards.map((c, i) => <PlayingCard key={i} card={c} small tagVal={showTags ? tag(c) : null} anim="deal" delay={h.cards.length === 2 && i < 2 ? 300 + i * 540 : 0} />)}</div>
                           <div className="flex items-center gap-1.5 mt-1"><span className="mono text-xs" style={{ color: "#fff", fontWeight: 700 }}>{totalStr(h.cards)}</span><span className="mono text-xs" style={{ color: "rgba(255,255,255,.55)" }}>{fmtMoney(h.bet)}</span>{h.doubled && <span className="text-xs" style={{ color: "rgba(255,255,255,.7)" }}>2x</span>}{h.result && <span className="result-pop" style={{ background: rc, color: "#0a0e0c", fontWeight: 800, fontSize: 10, padding: "1px 6px", borderRadius: 4, textTransform: "uppercase" }}>{h.result}</span>}</div>
                         </div>); })}
                   </div>
@@ -847,16 +847,16 @@ function CoachTable({ balance, setBalance }) {
             {cq.dealer.length === 0 ? <span className="text-xs" style={{ color: "rgba(255,255,255,.5)" }}>—</span> :
               cq.dealerRevealed
                 ? <>
-                    {cq.dealer.map((c, i) => <PlayingCard key={i} card={c} small anim={i === 1 ? "flip" : i > 1 ? "deal" : undefined} delay={i > 1 ? (i - 1) * 460 : 0} />)}
-                    {cGhost && cGhost.draws.map((c, i) => <PlayingCard key={"g" + i} card={c} small ghost anim="deal" delay={700 + i * 460} />)}
+                    {cq.dealer.map((c, i) => <PlayingCard key={i} card={c} small anim={i === 1 ? "flip" : i > 1 ? "deal" : undefined} delay={i > 1 ? 1000 + (i - 2) * 620 : 0} />)}
+                    {cGhost && cGhost.draws.map((c, i) => <PlayingCard key={"g" + i} card={c} small ghost anim="deal" delay={1000 + i * 620} />)}
                   </>
                 : cGhost
                   ? <>
                       <PlayingCard card={cq.dealer[0]} small />
                       <PlayingCard card={cq.dealer[1]} small ghost anim="flip" />
-                      {cGhost.draws.map((c, i) => <PlayingCard key={"g" + i} card={c} small ghost anim="deal" delay={700 + i * 460} />)}
+                      {cGhost.draws.map((c, i) => <PlayingCard key={"g" + i} card={c} small ghost anim="deal" delay={1000 + i * 620} />)}
                     </>
-                  : <><PlayingCard card={cq.dealer[0]} small anim="deal" /><PlayingCard hidden small anim="deal" delay={860} /></>}
+                  : <><PlayingCard card={cq.dealer[0]} small anim="deal" /><PlayingCard hidden small anim="deal" delay={1340} /></>}
           </div>
           <div className="mb-3">{cGhost && (
             <span className="text-xs" style={{ color: "rgba(255,255,255,.55)", fontStyle: "italic" }}>
@@ -882,7 +882,7 @@ function CoachTable({ balance, setBalance }) {
             ) :
               cq.hands.map((h, hi) => { const isActive = cq.phase === "player" && hi === cq.active; const rc = h.result === "win" ? C.split : h.result === "lose" ? C.stand : h.result === "push" ? C.gold : h.result === "surrender" ? C.surrender : "transparent"; return (
                 <div key={hi} className={isActive ? "hand-active" : ""} style={{ padding: 6, borderRadius: 10, outline: isActive ? `2px solid ${C.gold}` : h.result ? `2px solid ${rc}` : "2px solid transparent", outlineOffset: 1 }}>
-                  <div className="flex gap-1.5">{h.cards.map((c, i) => <PlayingCard key={i} card={c} small anim="deal" delay={h.cards.length === 2 && i < 2 ? 220 + i * 460 : 0} />)}</div>
+                  <div className="flex gap-1.5">{h.cards.map((c, i) => <PlayingCard key={i} card={c} small anim="deal" delay={h.cards.length === 2 && i < 2 ? 300 + i * 540 : 0} />)}</div>
                   <div className="flex items-center gap-1.5 mt-1"><span className="mono text-xs" style={{ color: "#fff", fontWeight: 700 }}>{totalStr(h.cards)}</span><span className="mono text-xs" style={{ color: "rgba(255,255,255,.55)" }}>{fmtMoney(h.bet)}</span>{h.result && <span className="result-pop" style={{ background: rc, color: "#0a0e0c", fontWeight: 800, fontSize: 10, padding: "1px 6px", borderRadius: 4, textTransform: "uppercase" }}>{h.result}</span>}</div>
                 </div>); })}
           </div>
