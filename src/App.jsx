@@ -1033,24 +1033,22 @@ function CoachTable({ balance, setBalance }) {
 }
 
 /* --------------------- dealer-reveal timing ---------------------
-   Mirrors the card-deal CSS: the hole flips, then draws land one at a time.
-   The round's RESULT (message, win flash, badges, glow, money) is held back
-   only until the LAST dealer card has visually landed — a card reads as "down"
-   partway through its animation (dealIn hits full opacity ~45%, flipIn ~60%),
-   so we reveal right as it settles plus a tiny beat, not after the full
-   animation completes. `land`/`flipLand` = when a card is visually down;
-   `beat` is the small pause after that (kept short so the result comes right
-   after the cards, not well after them). */
-const DEAL_TIMING = { drawBase: 1000, drawGap: 620, land: 540, flipLand: 720, beat: 40, opening: 1200 };
+   The result (dealer total + message + win flash + money, all gated together)
+   fires just ~200ms after the LAST dealer card BEGINS to reveal — so the
+   outcome lands in sync with the card coming into view, not well after it has
+   fully settled. `drawBase`/`drawGap` mirror the card-deal delays on the felt
+   (the last draw starts at drawBase + (draws-1)*drawGap); `drawOffset` /
+   `flipOffset` are the short lead the result trails the card's entrance by. */
+const DEAL_TIMING = { drawBase: 1000, drawGap: 620, drawOffset: 230, flipOffset: 430, opening: 720 };
 function revealMsFor(cg, opening) {
   if (opening) return DEAL_TIMING.opening;
   if (cg.dealerRevealed) {
     const draws = Math.max(0, cg.dealer.length - 2);
-    if (draws === 0) return DEAL_TIMING.flipLand + DEAL_TIMING.beat; // dealer stood on two — reveal just after the hole flip
-    return DEAL_TIMING.drawBase + (draws - 1) * DEAL_TIMING.drawGap + DEAL_TIMING.land + DEAL_TIMING.beat;
+    if (draws === 0) return DEAL_TIMING.flipOffset; // dealer stood on two — fire as the hole flips into view
+    return DEAL_TIMING.drawBase + (draws - 1) * DEAL_TIMING.drawGap + DEAL_TIMING.drawOffset;
   }
-  // player bust / surrender: the hole flips (as a ghost) — reveal right after it settles
-  return DEAL_TIMING.flipLand + DEAL_TIMING.beat;
+  // player bust / surrender: fire as the hole flips into view
+  return DEAL_TIMING.flipOffset;
 }
 
 /* --------------------- last-hands W/L strip --------------------- */
