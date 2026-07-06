@@ -1033,20 +1033,24 @@ function CoachTable({ balance, setBalance }) {
 }
 
 /* --------------------- dealer-reveal timing ---------------------
-   Must mirror the card-deal CSS: the hole flips, then draws land one at a
-   time. The round's RESULT (message, win flash, badges, glow, money) is held
-   back until the last dealer card has landed, so the outcome reveals AFTER the
-   cards — not before them. Values are ms and match the delays used on the felt. */
-const DEAL_TIMING = { flip: 1150, deal: 1050, drawBase: 1000, drawGap: 620, beat: 280, opening: 2050 };
+   Mirrors the card-deal CSS: the hole flips, then draws land one at a time.
+   The round's RESULT (message, win flash, badges, glow, money) is held back
+   only until the LAST dealer card has visually landed — a card reads as "down"
+   partway through its animation (dealIn hits full opacity ~45%, flipIn ~60%),
+   so we reveal right as it settles plus a tiny beat, not after the full
+   animation completes. `land`/`flipLand` = when a card is visually down;
+   `beat` is the small pause after that (kept short so the result comes right
+   after the cards, not well after them). */
+const DEAL_TIMING = { drawBase: 1000, drawGap: 620, land: 540, flipLand: 720, beat: 40, opening: 1200 };
 function revealMsFor(cg, opening) {
   if (opening) return DEAL_TIMING.opening;
   if (cg.dealerRevealed) {
     const draws = Math.max(0, cg.dealer.length - 2);
-    if (draws === 0) return DEAL_TIMING.flip + DEAL_TIMING.beat;
-    return DEAL_TIMING.drawBase + (draws - 1) * DEAL_TIMING.drawGap + DEAL_TIMING.deal + DEAL_TIMING.beat;
+    if (draws === 0) return DEAL_TIMING.flipLand + DEAL_TIMING.beat; // dealer stood on two — reveal just after the hole flip
+    return DEAL_TIMING.drawBase + (draws - 1) * DEAL_TIMING.drawGap + DEAL_TIMING.land + DEAL_TIMING.beat;
   }
-  // player bust / surrender: the hole flips (as a ghost) — give it a beat before the verdict
-  return DEAL_TIMING.flip + DEAL_TIMING.beat;
+  // player bust / surrender: the hole flips (as a ghost) — reveal right after it settles
+  return DEAL_TIMING.flipLand + DEAL_TIMING.beat;
 }
 
 /* --------------------- last-hands W/L strip --------------------- */
