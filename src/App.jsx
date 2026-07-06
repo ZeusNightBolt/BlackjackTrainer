@@ -161,6 +161,15 @@ export default function App() {
   const [hideCount, setHideCount] = useState(SAVED.hideCount ?? false);
   const [reveal, setReveal] = useState(false);
   const [primer, setPrimer] = useState(false);
+  // holds the round result (message/flash/badges/money) until the dealer's cards finish landing
+  const [gHold, setGHold] = useState(false);
+  const gHoldTimer = useRef(null);
+  const holdReveal = useCallback((cg, opening) => {
+    clearTimeout(gHoldTimer.current);
+    setGHold(true);
+    gHoldTimer.current = setTimeout(() => setGHold(false), revealMsFor(cg, opening));
+  }, []);
+  const clearHold = useCallback(() => { clearTimeout(gHoldTimer.current); setGHold(false); }, []);
 
   useEffect(() => {
     try { localStorage.setItem(LS_KEY, JSON.stringify({ balance, chipSize, agg, useDev, betWithCount, showTags, hideCount })); } catch { /* private mode */ }
@@ -168,7 +177,7 @@ export default function App() {
 
   const deal = useCallback(() => { setAnswered(null); setSc(buildScenario(ruleSet, cats)); }, [ruleSet, cats]);
   useEffect(() => { deal(); }, [deal]);
-  useEffect(() => () => clearTimeout(timer.current), []);
+  useEffect(() => () => { clearTimeout(timer.current); clearTimeout(gHoldTimer.current); }, []);
 
   function answer(choice) {
     if (answered) return;
@@ -199,10 +208,12 @@ export default function App() {
     cg.dealer = [du, dh];
     cg.hands = [{ cards: [p0, p1], bet, done: false, doubled: false, mistakes: 0, isSplitAce: false, result: null }];
     setReveal(false);
+    clearHold();
     if (baseVal(du) === 11) { cg.phase = "insurance"; setG(cg); return; }
     const S = finalizeOpening(cg);
     setG(cg);
     if (S) {
+      holdReveal(cg, true);
       setAgg((a) => ({ ...a, rounds: a.rounds + 1, handsWon: a.handsWon + S.won, handsLost: a.handsLost + S.lost, handsPush: a.handsPush + S.push, net: a.net + S.net, recent: pushRecent(a.recent, S.net) }));
       setBalance((b) => Math.round((b + S.net) * 100) / 100);
     }
@@ -219,6 +230,7 @@ export default function App() {
     cg.coach = { ok: insOK, ins: true, text: `Insurance wins only if the dealer's hole card is a ten. That's +EV only when the shoe is ten-rich — true count +3 or higher (at +3 the chance of a ten in the hole passes 1 in 3). You're at TC ${signed(itc)}, so the correct play was ${correctTake ? "TAKE" : "DECLINE"}. You ${take ? "took" : "declined"} it.` };
     const S = finalizeOpening(cg);
     setG(cg);
+    if (S) holdReveal(cg, true);
     setAgg((a) => {
       const na = { ...a, countDecisions: a.countDecisions + 1, countCorrect: a.countCorrect + (insOK ? 1 : 0) };
       if (S) { na.rounds += 1; na.handsWon += S.won; na.handsLost += S.lost; na.handsPush += S.push; na.net += S.net; na.recent = pushRecent(a.recent, S.net); }
@@ -272,6 +284,7 @@ export default function App() {
       S = { won: 0, lost: 1, push: 0, flawed: h.mistakes > 0 ? 1 : 0, flawedWon: 0, net: cg.roundNet };
     }
     setG(cg);
+    if (S) holdReveal(cg, false);
     setAgg((a) => {
       const na = { ...a, decisions: a.decisions + 1, correct: a.correct + (ok ? 1 : 0) };
       if (play.isDeviation) { na.countDecisions = a.countDecisions + 1; na.countCorrect = a.countCorrect + (ok ? 1 : 0); }
@@ -371,13 +384,20 @@ export default function App() {
             background:linear-gradient(to top, ${C.bg} 72%, rgba(10,14,12,0));}
         }
         .act-btn{min-height:52px;}
+        /* --- app frame: a contained, bordered surface so the trainer reads as an app --- */
+        .play-frame{border:1px solid ${C.border};border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.02),transparent 44%);padding:12px;box-shadow:0 1px 0 rgba(255,255,255,.03) inset, 0 10px 30px rgba(0,0,0,.35);}
+        .play-frame > .game-grid{margin-bottom:0;}
         /* --- compact phone layout (iPhone Safari first) --- */
         @media(max-width:640px){
           .tagline{display:none;}
           .hide-sm{display:none;}
-          .felt{padding:12px 10px;}
-          main{padding-top:10px;}
+          .felt{padding:10px 9px;}
+          main{padding-top:8px;padding-left:10px;padding-right:10px;}
+          .play-frame{padding:8px;border-radius:14px;}
+          .compact-p{padding:8px !important;}
         }
+        /* the core play column stays centered and narrow so it feels like a fixed app screen */
+        .play-col{max-width:560px;margin:0 auto;width:100%;}
         @media(prefers-reduced-motion:reduce){.card-deal,.card-flip,.result-pop,.delta-float,.hand-active,.streak-tag,.streak-burst{animation:none;}}
       `}</style>
 
@@ -465,7 +485,7 @@ export default function App() {
 
             {/* -------- FULL GAME + COUNT -------- */}
             {drillMode === "game" && (
-              <div>
+              <div className="play-frame">
                 <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
                   <div className="text-xs" style={{ color: C.sub }}>{RULES.name} · {RULES.shortLabel} · Hi-Lo</div>
                   <button onClick={() => { setG(INIT_G); setAgg(INIT_AGG); setBalance(STARTING_BALANCE); try { localStorage.removeItem(LS_KEY); } catch {} }} style={{ padding: "4px 10px", borderRadius: 8, border: `1px solid ${C.border}`, background: "transparent", color: C.sub, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Reset</button>
@@ -476,8 +496,8 @@ export default function App() {
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <div style={{ position: "relative" }}>
                       <div className="text-xs" style={{ color: C.sub }}>Balance</div>
-                      <div className="mono" style={{ color: balance >= STARTING_BALANCE ? C.split : balance <= 0 ? C.stand : C.ink, fontSize: 22, fontWeight: 700, lineHeight: 1 }}>{fmtMoney(balance)}</div>
-                      {g.phase === "done" && g.roundNet !== 0 && (
+                      <div className="mono" style={{ color: balance >= STARTING_BALANCE ? C.split : balance <= 0 ? C.stand : C.ink, fontSize: 22, fontWeight: 700, lineHeight: 1 }}>{fmtMoney(gHold ? balance - g.roundNet : balance)}</div>
+                      {g.phase === "done" && g.roundNet !== 0 && !gHold && (
                         <span key={agg.rounds} className="delta-float mono" style={{ position: "absolute", left: "100%", marginLeft: 8, top: 12, fontSize: 14, fontWeight: 700, whiteSpace: "nowrap", color: g.roundNet > 0 ? C.split : C.stand }}>{fmtSigned(g.roundNet)}</span>
                       )}
                     </div>
@@ -528,12 +548,12 @@ export default function App() {
                 </div>
 
                 {/* felt */}
-                <div className={"rounded-2xl p-4 mb-3 felt" + (g.phase === "done" ? (g.roundNet > 0 ? " won" : g.roundNet < 0 ? " lost" : "") : "")}>
+                <div className={"rounded-2xl p-4 mb-3 felt" + (g.phase === "done" && !gHold ? (g.roundNet > 0 ? " won" : g.roundNet < 0 ? " lost" : "") : "")}>
                   <FeltMarkings />
-                  <LastHands recent={agg.recent} />
-                  {g.phase === "done" && g.roundNet > 0 && <WinFlash key={agg.rounds} net={g.roundNet} blackjack={g.message.startsWith("Blackjack")} streak={winStreak(agg.recent)} />}
+                  <LastHands recent={agg.recent} hold={gHold} />
+                  {g.phase === "done" && g.roundNet > 0 && !gHold && <WinFlash key={agg.rounds} net={g.roundNet} blackjack={g.message.startsWith("Blackjack")} streak={winStreak(agg.recent)} />}
                   <div className="mb-2" style={{ color: "rgba(255,255,255,.35)", fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" }}>{RULES.name}<span className="hide-sm"> · {fmtMoney(RULES.tableMin)} min</span></div>
-                  <div className="flex items-center gap-2 mb-1 flex-wrap"><span className="text-xs" style={{ color: "rgba(255,255,255,.6)" }}>Dealer</span>{g.dealerRevealed && g.dealer.length > 0 && <span className="mono text-xs" style={{ color: handTotal(g.dealer).total > 21 ? "#ffd7d7" : "#fff", fontWeight: 700 }}>{totalStr(g.dealer)}</span>}{gGhost && <span className="mono text-xs" style={{ color: "#ffe9a8", fontStyle: "italic" }}>→ would've {gGhost.total > 21 ? "BUSTED" : gGhost.draws.length ? "made " + gGhost.total : "stood on " + gGhost.total}</span>}</div>
+                  <div className="flex items-center gap-2 mb-1 flex-wrap"><span className="text-xs" style={{ color: "rgba(255,255,255,.6)" }}>Dealer</span>{g.dealerRevealed && g.dealer.length > 0 && !gHold && <span className="mono text-xs" style={{ color: handTotal(g.dealer).total > 21 ? "#ffd7d7" : "#fff", fontWeight: 700 }}>{totalStr(g.dealer)}</span>}{gGhost && !gHold && <span className="mono text-xs" style={{ color: "#ffe9a8", fontStyle: "italic" }}>→ would've {gGhost.total > 21 ? "BUSTED" : gGhost.draws.length ? "made " + gGhost.total : "stood on " + gGhost.total}</span>}</div>
                   <div className="flex gap-2 mb-1" style={{ flexWrap: "wrap" }}>
                     {g.dealer.length === 0 ? <span className="text-xs" style={{ color: "rgba(255,255,255,.5)" }}>—</span> :
                       g.dealerRevealed
@@ -549,7 +569,7 @@ export default function App() {
                             </>
                           : <><PlayingCard card={g.dealer[0]} small tagVal={showTags ? tag(g.dealer[0]) : null} anim="deal" /><PlayingCard hidden small anim="deal" delay={1340} /></>}
                   </div>
-                  <div className="mb-3">{gGhost && (
+                  <div className="mb-3">{gGhost && !gHold && (
                     <span className="text-xs" style={{ color: "rgba(255,255,255,.55)", fontStyle: "italic" }}>
                       {gSurrHand ? "hole card + draws shown for training — not counted" : "replay from before your bust card — it goes to the dealer here · not counted"}
                       {gSurrHand && <> · standing pat, your {handTotal(gSurrHand.cards).total} would have <b style={{ color: gGhost.total > 21 || handTotal(gSurrHand.cards).total > gGhost.total ? "#7ce3b1" : handTotal(gSurrHand.cards).total === gGhost.total ? "#ffe9a8" : "#ffb3bd" }}>{gGhost.total > 21 || handTotal(gSurrHand.cards).total > gGhost.total ? "WON" : handTotal(gSurrHand.cards).total === gGhost.total ? "PUSHED" : "LOST"}</b></>}
@@ -559,13 +579,16 @@ export default function App() {
                   <div className="text-xs mb-1" style={{ color: "rgba(255,255,255,.6)" }}>You{g.hands.length > 1 ? ` · ${g.hands.length} hands` : ""}</div>
                   <div className="flex gap-3" style={{ flexWrap: "wrap" }}>
                     {g.hands.length === 0 ? <span className="text-xs" style={{ color: "rgba(255,255,255,.5)" }}>Press Deal to start</span> :
-                      g.hands.map((h, hi) => { const isActive = g.phase === "player" && hi === g.active; const rc = h.result === "win" ? C.split : h.result === "lose" ? C.stand : h.result === "push" ? C.gold : h.result === "surrender" ? C.surrender : "transparent"; return (
-                        <div key={hi} className={isActive ? "hand-active" : ""} style={{ padding: 6, borderRadius: 10, outline: isActive ? `2px solid ${C.gold}` : h.result ? `2px solid ${rc}` : "2px solid transparent", outlineOffset: 1 }}>
+                      g.hands.map((h, hi) => { const isActive = g.phase === "player" && hi === g.active; const showRes = h.result && !gHold; const rc = h.result === "win" ? C.split : h.result === "lose" ? C.stand : h.result === "push" ? C.gold : h.result === "surrender" ? C.surrender : "transparent"; return (
+                        <div key={hi} className={isActive ? "hand-active" : ""} style={{ padding: 6, borderRadius: 10, outline: isActive ? `2px solid ${C.gold}` : showRes ? `2px solid ${rc}` : "2px solid transparent", outlineOffset: 1 }}>
                           <div className="flex gap-1.5">{h.cards.map((c, i) => <PlayingCard key={i} card={c} small tagVal={showTags ? tag(c) : null} anim="deal" delay={h.cards.length === 2 && i < 2 ? 300 + i * 540 : 0} />)}</div>
-                          <div className="flex items-center gap-1.5 mt-1"><span className="mono text-xs" style={{ color: "#fff", fontWeight: 700 }}>{totalStr(h.cards)}</span><span className="mono text-xs" style={{ color: "rgba(255,255,255,.55)" }}>{fmtMoney(h.bet)}</span>{h.doubled && <span className="text-xs" style={{ color: "rgba(255,255,255,.7)" }}>2x</span>}{h.result && <span className="result-pop" style={{ background: rc, color: "#0a0e0c", fontWeight: 800, fontSize: 10, padding: "1px 6px", borderRadius: 4, textTransform: "uppercase" }}>{h.result}</span>}</div>
+                          <div className="flex items-center gap-1.5 mt-1"><span className="mono text-xs" style={{ color: "#fff", fontWeight: 700 }}>{totalStr(h.cards)}</span><span className="mono text-xs" style={{ color: "rgba(255,255,255,.55)" }}>{fmtMoney(h.bet)}</span>{h.doubled && <span className="text-xs" style={{ color: "rgba(255,255,255,.7)" }}>2x</span>}{showRes && <span className="result-pop" style={{ background: rc, color: "#0a0e0c", fontWeight: 800, fontSize: 10, padding: "1px 6px", borderRadius: 4, textTransform: "uppercase" }}>{h.result}</span>}</div>
                         </div>); })}
                   </div>
                 </div>
+
+                {/* WHAT IF? — inline under the felt so the review is in view */}
+                {g.phase === "done" && !gHold && <WhatIf snap={g.whatIf} actualNet={g.roundNet} />}
 
                 {/* insurance prompt / actions / deal — docked to the thumb on phones */}
                 <div className="action-dock">
@@ -617,16 +640,13 @@ export default function App() {
                   </div>
                 )}
 
-                {/* round result */}
-                {g.phase === "done" && g.message && (
+                {/* round result — held back until the dealer's cards have landed */}
+                {g.phase === "done" && g.message && !gHold && (
                   <div className="rounded-lg p-3 mt-3" style={{ background: C.panel2, border: `1px solid ${g.roundNet > 0 ? C.split : g.roundNet < 0 ? C.stand : C.border}` }}>
                     <div className="flex items-center gap-2"><span className="text-sm" style={{ color: C.ink }}>{g.message}</span><span className="mono text-sm" style={{ color: g.roundNet > 0 ? C.split : g.roundNet < 0 ? C.stand : C.sub, fontWeight: 700 }}>{fmtSigned(g.roundNet)}</span></div>
                     {g.roundFlawedWon > 0 && <div className="text-xs mt-1" style={{ color: C.gold }}>You misplayed and still won — that's variance, not skill.</div>}
                   </div>
                 )}
-
-                {/* counterfactual replay */}
-                {g.phase === "done" && <WhatIf snap={g.whatIf} actualNet={g.roundNet} />}
 
                 {/* move log */}
                 {g.log.length > 0 && (
@@ -700,6 +720,12 @@ function CoachTable({ balance, setBalance }) {
   const [cs, setCs] = useState(() => ({ ...COACH_INIT_CS, ...loadCoachSaved() }));
   const [clog, setClog] = useState([]);
   const [hideC, setHideC] = useState(false);
+  // holds the round result until the dealer's reveal animation finishes (see revealMsFor)
+  const [cHold, setCHold] = useState(false);
+  const cHoldTimer = useRef(null);
+  const holdReveal = useCallback((cg, opening) => { clearTimeout(cHoldTimer.current); setCHold(true); cHoldTimer.current = setTimeout(() => setCHold(false), revealMsFor(cg, opening)); }, []);
+  const clearHold = useCallback(() => { clearTimeout(cHoldTimer.current); setCHold(false); }, []);
+  useEffect(() => () => clearTimeout(cHoldTimer.current), []);
   useEffect(() => { try { localStorage.setItem(COACH_LS, JSON.stringify(cs)); } catch {} }, [cs]);
 
   const decksRem = cq.shoe.length / 52;
@@ -741,19 +767,20 @@ function CoachTable({ balance, setBalance }) {
     cg.rc += tag(p0) + tag(p1) + tag(du);
     cg.dealer = [du, dh];
     cg.hands = [{ cards: [p0, p1], bet: betAmt, done: false, doubled: false, mistakes: 0, isSplitAce: false, result: null }];
+    clearHold();
     if (baseVal(du) === 11) { cg.phase = "insurance"; setCq(cg); return; }
     const S = finalizeOpening(cg);
-    setCq(cg); settle(S);
+    setCq(cg); settle(S); if (S) holdReveal(cg, true);
   }
   /* back to a blank table for a fresh bet — keeps the shoe and running count (real-table behavior) */
-  function newBet() { setCq((c) => ({ ...INIT_G, shoe: c.shoe, rc: c.rc })); }
+  function newBet() { clearHold(); setCq((c) => ({ ...INIT_G, shoe: c.shoe, rc: c.rc })); }
   function coachInsurance(take) {
     if (cq.phase !== "insurance") return;
     const cg = { ...cq, shoe: [...cq.shoe], dealer: [...cq.dealer], hands: cq.hands.map((h) => ({ ...h, cards: [...h.cards] })) };
     const dealerBJ = handTotal(cg.dealer).total === 21;
     cg.insNet = take ? (dealerBJ ? cg.bet : -cg.bet / 2) : 0;
     const S = finalizeOpening(cg);
-    setCq(cg); settle(S);
+    setCq(cg); settle(S); if (S) holdReveal(cg, true);
   }
   function coachAct(action) {
     if (cq.phase !== "player") return;
@@ -793,7 +820,7 @@ function CoachTable({ balance, setBalance }) {
       cg.dealerRevealed = false; cg.roundNet = -(h.bet / 2); cg.message = "Surrendered — half back."; cg.phase = "done";
       S = { net: cg.roundNet };
     }
-    setCq(cg); settle(S);
+    setCq(cg); settle(S); if (S) holdReveal(cg, false);
   }
 
   const active = cq.hands[cq.active];
@@ -814,10 +841,10 @@ function CoachTable({ balance, setBalance }) {
 
   const barW = (ev) => Math.max(4, Math.min(100, ((ev + 1) / 2) * 100));
   return (
-    <div>
-      <div className="rounded-xl p-3 mb-2" style={{ background: C.panel, border: `1px solid ${C.gold}` }}>
+    <div className="play-frame">
+      <div className="rounded-xl p-3 mb-2 compact-p" style={{ background: C.panel, border: `1px solid ${C.gold}` }}>
         <div className="flex items-center justify-between flex-wrap gap-2">
-          <div><div className="text-xs" style={{ color: C.sub }}>Balance</div><div className="mono" style={{ fontSize: 20, fontWeight: 700, color: balance >= STARTING_BALANCE ? C.split : C.ink }}>{fmtMoney(balance)}</div></div>
+          <div><div className="text-xs" style={{ color: C.sub }}>Balance</div><div className="mono" style={{ fontSize: 20, fontWeight: 700, color: balance >= STARTING_BALANCE ? C.split : C.ink }}>{fmtMoney(cHold ? balance - cq.roundNet : balance)}</div></div>
           {!hideC && <div className="flex gap-4"><MiniStat label="Running" value={signed(cq.rc)} color={C.ink} /><MiniStat label="True" value={cq.shoe.length ? signed(Math.round(tc * 10) / 10) : "0"} color={tc >= 2 ? C.split : C.ink} /><MiniStat label="Decks" value={cq.shoe.length ? decksRem.toFixed(1) : RULES.decks.toFixed(1)} color={C.sub} /></div>}
         </div>
         <div className="flex items-center justify-between gap-2 mt-2 pt-2 flex-wrap" style={{ borderTop: `1px solid ${C.border}` }}>
@@ -837,12 +864,12 @@ function CoachTable({ balance, setBalance }) {
           <span className="mono">{cq.shoe.length ? cq.shoe.length + " cards to the cut" : "fresh shuffle on deal"}</span>
         </div>
         <div className="mb-2" style={{ height: 4, borderRadius: 2, background: C.panel2, overflow: "hidden" }}><div style={{ height: "100%", width: `${cq.shoe.length ? Math.round(((SHOE_CARDS - cq.shoe.length) / SHOE_CARDS) * 100) : 0}%`, background: C.felt, transition: "width .4s ease" }} /></div>
-        <div className={"rounded-2xl p-4 mb-3 felt" + (cq.phase === "done" ? (cq.roundNet > 0 ? " won" : cq.roundNet < 0 ? " lost" : "") : "")}>
+        <div className={"rounded-2xl p-4 mb-3 felt" + (cq.phase === "done" && !cHold ? (cq.roundNet > 0 ? " won" : cq.roundNet < 0 ? " lost" : "") : "")}>
           <FeltMarkings />
-          <LastHands recent={cs.recent} />
-          {cq.phase === "done" && cq.roundNet > 0 && <WinFlash key={cs.hands} net={cq.roundNet} blackjack={cq.message.startsWith("Blackjack")} streak={winStreak(cs.recent)} />}
+          <LastHands recent={cs.recent} hold={cHold} />
+          {cq.phase === "done" && cq.roundNet > 0 && !cHold && <WinFlash key={cs.hands} net={cq.roundNet} blackjack={cq.message.startsWith("Blackjack")} streak={winStreak(cs.recent)} />}
           <div className="mb-2" style={{ color: "rgba(255,255,255,.35)", fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" }}>{RULES.name}<span className="hide-sm"> · {fmtMoney(RULES.tableMin)} min</span></div>
-          <div className="flex items-center gap-2 mb-1 flex-wrap"><span className="text-xs" style={{ color: "rgba(255,255,255,.6)" }}>Dealer</span>{cq.dealerRevealed && cq.dealer.length > 0 && <span className="mono text-xs" style={{ color: "#fff", fontWeight: 700 }}>{totalStr(cq.dealer)}</span>}{cGhost && <span className="mono text-xs" style={{ color: "#ffe9a8", fontStyle: "italic" }}>→ would've {cGhost.total > 21 ? "BUSTED" : cGhost.draws.length ? "made " + cGhost.total : "stood on " + cGhost.total}</span>}</div>
+          <div className="flex items-center gap-2 mb-1 flex-wrap"><span className="text-xs" style={{ color: "rgba(255,255,255,.6)" }}>Dealer</span>{cq.dealerRevealed && cq.dealer.length > 0 && !cHold && <span className="mono text-xs" style={{ color: "#fff", fontWeight: 700 }}>{totalStr(cq.dealer)}</span>}{cGhost && !cHold && <span className="mono text-xs" style={{ color: "#ffe9a8", fontStyle: "italic" }}>→ would've {cGhost.total > 21 ? "BUSTED" : cGhost.draws.length ? "made " + cGhost.total : "stood on " + cGhost.total}</span>}</div>
           <div className="flex gap-2 mb-1" style={{ flexWrap: "wrap", minHeight: 62 }}>
             {cq.dealer.length === 0 ? <span className="text-xs" style={{ color: "rgba(255,255,255,.5)" }}>—</span> :
               cq.dealerRevealed
@@ -858,7 +885,7 @@ function CoachTable({ balance, setBalance }) {
                     </>
                   : <><PlayingCard card={cq.dealer[0]} small anim="deal" /><PlayingCard hidden small anim="deal" delay={1340} /></>}
           </div>
-          <div className="mb-3">{cGhost && (
+          <div className="mb-3">{cGhost && !cHold && (
             <span className="text-xs" style={{ color: "rgba(255,255,255,.55)", fontStyle: "italic" }}>
               {cSurrHand ? "hole card + draws shown for training — not counted" : "replay from before your bust card — it goes to the dealer here · not counted"}
               {cSurrHand && <> · standing pat, your {handTotal(cSurrHand.cards).total} would have <b style={{ color: cGhost.total > 21 || handTotal(cSurrHand.cards).total > cGhost.total ? "#7ce3b1" : handTotal(cSurrHand.cards).total === cGhost.total ? "#ffe9a8" : "#ffb3bd" }}>{cGhost.total > 21 || handTotal(cSurrHand.cards).total > cGhost.total ? "WON" : handTotal(cSurrHand.cards).total === cGhost.total ? "PUSHED" : "LOST"}</b></>}
@@ -880,13 +907,16 @@ function CoachTable({ balance, setBalance }) {
                 <span className="text-xs" style={{ color: "rgba(255,255,255,.55)", maxWidth: 150 }}>{betAmt ? `${fmtMoney(betAmt)} in the circle — deal when ready.` : "Tap chips below to build your bet, then deal."}</span>
               </div>
             ) :
-              cq.hands.map((h, hi) => { const isActive = cq.phase === "player" && hi === cq.active; const rc = h.result === "win" ? C.split : h.result === "lose" ? C.stand : h.result === "push" ? C.gold : h.result === "surrender" ? C.surrender : "transparent"; return (
-                <div key={hi} className={isActive ? "hand-active" : ""} style={{ padding: 6, borderRadius: 10, outline: isActive ? `2px solid ${C.gold}` : h.result ? `2px solid ${rc}` : "2px solid transparent", outlineOffset: 1 }}>
+              cq.hands.map((h, hi) => { const isActive = cq.phase === "player" && hi === cq.active; const showRes = h.result && !cHold; const rc = h.result === "win" ? C.split : h.result === "lose" ? C.stand : h.result === "push" ? C.gold : h.result === "surrender" ? C.surrender : "transparent"; return (
+                <div key={hi} className={isActive ? "hand-active" : ""} style={{ padding: 6, borderRadius: 10, outline: isActive ? `2px solid ${C.gold}` : showRes ? `2px solid ${rc}` : "2px solid transparent", outlineOffset: 1 }}>
                   <div className="flex gap-1.5">{h.cards.map((c, i) => <PlayingCard key={i} card={c} small anim="deal" delay={h.cards.length === 2 && i < 2 ? 300 + i * 540 : 0} />)}</div>
-                  <div className="flex items-center gap-1.5 mt-1"><span className="mono text-xs" style={{ color: "#fff", fontWeight: 700 }}>{totalStr(h.cards)}</span><span className="mono text-xs" style={{ color: "rgba(255,255,255,.55)" }}>{fmtMoney(h.bet)}</span>{h.result && <span className="result-pop" style={{ background: rc, color: "#0a0e0c", fontWeight: 800, fontSize: 10, padding: "1px 6px", borderRadius: 4, textTransform: "uppercase" }}>{h.result}</span>}</div>
+                  <div className="flex items-center gap-1.5 mt-1"><span className="mono text-xs" style={{ color: "#fff", fontWeight: 700 }}>{totalStr(h.cards)}</span><span className="mono text-xs" style={{ color: "rgba(255,255,255,.55)" }}>{fmtMoney(h.bet)}</span>{showRes && <span className="result-pop" style={{ background: rc, color: "#0a0e0c", fontWeight: 800, fontSize: 10, padding: "1px 6px", borderRadius: 4, textTransform: "uppercase" }}>{h.result}</span>}</div>
                 </div>); })}
           </div>
         </div>
+
+        {/* WHAT IF? — inline right under the felt so the review sits in view, above the fold */}
+        {cq.phase === "done" && !cHold && <WhatIf snap={cq.whatIf} actualNet={cq.roundNet} />}
 
         {/* pre-move coach advice — ABOVE the buttons so you read it before acting */}
         {cq.phase === "player" && best && (
@@ -936,11 +966,12 @@ function CoachTable({ balance, setBalance }) {
         ) : cq.phase === "done" ? (
           /* --- round over: fast rebet, or wipe the table to change the bet --- */
           <div>
-            {cq.message && (
+            {cq.message && !cHold && (
               <div className="rounded-lg p-2 mb-2 flex items-center gap-2" style={{ background: C.panel2, border: `1px solid ${cq.roundNet > 0 ? C.split : cq.roundNet < 0 ? C.stand : C.border}` }}>
                 <span className="text-sm" style={{ color: C.ink }}>{cq.message}</span><span className="mono text-sm" style={{ fontWeight: 700, color: cq.roundNet > 0 ? C.split : cq.roundNet < 0 ? C.stand : C.sub }}>{fmtSigned(cq.roundNet)}</span>
               </div>
             )}
+            {cHold && <div className="text-xs mb-2 mono" style={{ color: C.sub }}>Dealer plays…</div>}
             {betAmt > balance && <div className="text-xs mb-2" style={{ color: C.stand }}>Balance can't cover the last bet — change it.</div>}
             <div className="grid grid-cols-2 gap-2">
               <button className="act-btn" disabled={betAmt <= 0 || betAmt > balance} onClick={dealCoach} style={{ padding: "14px 0", borderRadius: 12, border: "none", cursor: betAmt > 0 && betAmt <= balance ? "pointer" : "not-allowed", background: betAmt > 0 && betAmt <= balance ? `linear-gradient(160deg,#f2c96a,${C.gold})` : C.panel2, color: betAmt > 0 && betAmt <= balance ? "#0a0e0c" : C.sub, fontWeight: 800, fontSize: 14 }}>Rebet {fmtMoney(betAmt)} &amp; deal</button>
@@ -967,9 +998,8 @@ function CoachTable({ balance, setBalance }) {
         </div>
       </div>
 
-      {/* right column: live feedback first (beside the table), ledger below */}
+      {/* right column: decision log + ledger (What-If now sits inline under the felt) */}
       <div className="game-side">
-        {cq.phase === "done" && <div className="mb-3" style={{ marginTop: -12 }}><WhatIf snap={cq.whatIf} actualNet={cq.roundNet} /></div>}
         {clog.length > 0 && (
           <div className="mb-3">
             <div className="text-xs mb-1" style={{ color: C.sub }}>Recent decisions vs coach:</div>
@@ -1002,17 +1032,37 @@ function CoachTable({ balance, setBalance }) {
   );
 }
 
+/* --------------------- dealer-reveal timing ---------------------
+   Must mirror the card-deal CSS: the hole flips, then draws land one at a
+   time. The round's RESULT (message, win flash, badges, glow, money) is held
+   back until the last dealer card has landed, so the outcome reveals AFTER the
+   cards — not before them. Values are ms and match the delays used on the felt. */
+const DEAL_TIMING = { flip: 1150, deal: 1050, drawBase: 1000, drawGap: 620, beat: 280, opening: 2050 };
+function revealMsFor(cg, opening) {
+  if (opening) return DEAL_TIMING.opening;
+  if (cg.dealerRevealed) {
+    const draws = Math.max(0, cg.dealer.length - 2);
+    if (draws === 0) return DEAL_TIMING.flip + DEAL_TIMING.beat;
+    return DEAL_TIMING.drawBase + (draws - 1) * DEAL_TIMING.drawGap + DEAL_TIMING.deal + DEAL_TIMING.beat;
+  }
+  // player bust / surrender: the hole flips (as a ghost) — give it a beat before the verdict
+  return DEAL_TIMING.flip + DEAL_TIMING.beat;
+}
+
 /* --------------------- last-hands W/L strip --------------------- */
 const wlp = (net) => (net > 0 ? "W" : net < 0 ? "L" : "P");
 const pushRecent = (list, net) => [...(list || []), wlp(net)].slice(-7);
 // count of consecutive wins ending at the most recent hand (a loss breaks it; a push doesn't extend it)
 const winStreak = (recent) => { let n = 0; for (let i = (recent || []).length - 1; i >= 0; i--) { if (recent[i] === "W") n++; else break; } return n; };
-/* Top-right of the felt: the last 7 round results, oldest → newest. */
-function LastHands({ recent }) {
-  if (!recent || recent.length === 0) return null;
+/* Top-right of the felt: the last 7 round results, oldest → newest.
+   While the current round's reveal is still animating (`hold`), the newest
+   letter is withheld so the strip doesn't spoil the outcome early. */
+function LastHands({ recent, hold }) {
+  const shown = hold && recent && recent.length ? recent.slice(0, -1) : recent;
+  if (!shown || shown.length === 0) return null;
   return (
     <span className="mono" aria-label="last hands, oldest to newest" style={{ position: "absolute", top: 7, right: 10, fontSize: 10, fontWeight: 800, letterSpacing: 0.5, zIndex: 2, background: "rgba(0,0,0,.25)", borderRadius: 6, padding: "2px 6px" }}>
-      {recent.map((r, i) => (
+      {shown.map((r, i) => (
         <span key={i} style={{ color: r === "W" ? "#7ce3b1" : r === "L" ? "#ffb3bd" : "#ffe9a8", marginLeft: i ? 4 : 0 }}>{r}</span>
       ))}
     </span>

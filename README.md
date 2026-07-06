@@ -27,7 +27,7 @@ A phone-first web app for learning **basic strategy** and **Hi-Lo card counting*
 - **Honest, visibility-correct counting** — running/true count, decks left, and estimated edge, updating card by card. Only cards a real player would see are counted; training-only reveals (ghost cards, would-be dealer draws) are shown dimmed and never counted.
 - **"What if?" replay** — after each round the trainer replays your first decision against the *same shoe* with every alternative and shows the realized outcome, framed as strategy vs. variance ("right call, worse result — don't let one draw retrain you"). On a bust or surrender the felt flips the dealer's hole card and lays out the would-be draws, timeline-correct: the card that busted you is the one the dealer would have drawn first.
 - **Count-based bet sizing, done right** — a Kelly-style 1×–12× ramp on the true count. Win/loss *progression* betting is deliberately not offered — it's mathematically fake, and the coach says so.
-- **Casino feel, phone-first** — a felt with a wooden rail and printed layout arcs, a betting circle that stacks your chips, suspenseful card deals, hole-card flips, an escalating win celebration on winning streaks, and a last-7 W/L strip. Action buttons dock under your thumb; add it to your iPhone home screen and it runs like an app. Bankroll and stats persist in `localStorage`.
+- **Casino feel, phone-first** — a bordered app frame around a felt with a wooden rail and printed layout arcs, a betting circle that stacks your chips, and deliberately paced deals: cards arc off the shoe one at a time, and at the end of a hand the dealer flips the hole card, *then* draws, with the outcome revealed only **after** the last card lands — never before. Winning streaks escalate the celebration; a last-7 W/L strip and the What-If review sit in view. Action buttons dock under your thumb; add it to your iPhone home screen and it runs like an app. Bankroll and stats persist in `localStorage`.
 
 ## Rules & validation
 
@@ -50,7 +50,10 @@ npm install       # install dependencies
 npm run dev       # dev server → http://localhost:5173
 npm run build     # production build → ./dist
 npm run preview   # preview the production build
+npm test          # run the unit + smoke tests (Vitest)
 ```
+
+**Tests:** [`src/engine.test.js`](src/engine.test.js) unit-tests the pure engine (hand totals and soft aces, S17 dealer play, 3:2 payouts, the surrender set, the balanced Hi-Lo count, and that the replay helpers never mutate live state), and [`src/App.dom.test.jsx`](src/App.dom.test.jsx) is a jsdom smoke test that renders the app, plays a Coach Me round, and checks each tab.
 
 **Deploy:** pushed to GitHub Pages by `.github/workflows/deploy.yml` on every push to `main`. `vite.config.js` uses `base: "./"`, so it works on a Pages project URL with no extra config.
 
