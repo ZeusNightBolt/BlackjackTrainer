@@ -278,7 +278,7 @@ export default function App() {
     else if (action === "R") {
       h.surrendered = true; h.done = true; h.result = "surrender";
       cg.dealerRevealed = false;
-      cg.roundNet = -(h.bet / 2);
+      cg.roundNet = -(h.bet / 2) + (cg.insNet || 0); // a lost insurance side bet still settles
       cg.message = "Surrendered — half your bet back.";
       cg.phase = "done";
       S = { won: 0, lost: 1, push: 0, flawed: h.mistakes > 0 ? 1 : 0, flawedWon: 0, net: cg.roundNet };
@@ -817,7 +817,7 @@ function CoachTable({ balance, setBalance }) {
     }
     else if (action === "R") {
       h.surrendered = true; h.done = true; h.result = "surrender";
-      cg.dealerRevealed = false; cg.roundNet = -(h.bet / 2); cg.message = "Surrendered — half back."; cg.phase = "done";
+      cg.dealerRevealed = false; cg.roundNet = -(h.bet / 2) + (cg.insNet || 0); cg.message = "Surrendered — half back."; cg.phase = "done";
       S = { net: cg.roundNet };
     }
     setCq(cg); settle(S); if (S) holdReveal(cg, false);

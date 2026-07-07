@@ -11,7 +11,19 @@ import { EVDATA, BUST } from "./evdata";
 export { BUST };
 
 /* ------------------------------ misc helpers ------------------------------ */
-export const rnd = (n) => Math.floor(Math.random() * n);
+/* Unbiased uniform integer in [0, n): crypto.getRandomValues + rejection sampling, so every
+   value is exactly equally likely (a bare modulo would bias low residues). The live shuffle
+   and every deal go through this. Math.random() remains only as a fallback for environments
+   without WebCrypto (never a modern browser or Node >= 19). */
+const CRYPTO = typeof globalThis !== "undefined" && globalThis.crypto && typeof globalThis.crypto.getRandomValues === "function" ? globalThis.crypto : null;
+const RND_BUF = new Uint32Array(1);
+export const rnd = (n) => {
+  if (!(n > 1)) return 0;
+  if (!CRYPTO) return Math.floor(Math.random() * n);
+  const limit = 4294967296 - (4294967296 % n); // rejection bound: keeps each residue class equally likely
+  do { CRYPTO.getRandomValues(RND_BUF); } while (RND_BUF[0] >= limit);
+  return RND_BUF[0] % n;
+};
 export const pick = (a) => a[rnd(a.length)];
 export const signed = (n) => (n >= 0 ? "+" : "") + n;
 export function fmtMoney(n) { const v = Math.round(n * 100) / 100; return "$" + v.toLocaleString("en-US", { maximumFractionDigits: 2 }); }
