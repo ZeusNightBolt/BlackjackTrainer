@@ -139,6 +139,24 @@ const LS_KEY = "bjt-save-v2";
 function loadSaved() { try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch { return {}; } }
 const SAVED = loadSaved();
 
+/* Finish an ABANDONED live round exactly as a real dealer would: complete any
+   one-card split hands, stand everything the player left standing, play out
+   the dealer, and return the settle result S ({ net, won, lost, push }) — or
+   null when there is nothing live to resolve. Pure: works on a copy, never
+   touches the on-screen round. Used when the page unloads mid-hand AFTER the
+   player has engaged it — per house policy, a dealt hand that was never
+   acted on is forfeited instead. */
+function settleAbandonedRound(g) {
+  if (g.phase !== "player") return null;
+  const cg = { ...g, shoe: [...g.shoe], dealer: [...g.dealer], log: [...(g.log || [])], hands: g.hands.map((h) => ({ ...h, cards: [...h.cards] })) };
+  for (const h of cg.hands) {
+    if (h.done) continue;
+    while (h.cards.length < 2) { const c = drawFrom(cg); cg.rc += tag(c); h.cards.push(c); }
+    h.done = true;
+  }
+  return advance(cg);
+}
+
 export default function App() {
   const [tab, setTab] = useState("coach");
   const [ruleSet, setRuleSet] = useState("american");
@@ -171,9 +189,49 @@ export default function App() {
   }, []);
   const clearHold = useCallback(() => { clearTimeout(gHoldTimer.current); setGHold(false); }, []);
 
+  /* ---- WAGER TIMING (real-casino behaviour) ----
+     Money riding on a live hand (main game + Coach tab) has already left the
+     wallet: the persisted balance is `balance − live exposure`, written the
+     moment cards are dealt. A refresh mid-hand therefore behaves like walking
+     away from a real table:
+       · hand dealt but never acted on (no hit/stand) → the wager is forfeited
+         (the save already holds the deducted figure);
+       · hand engaged → the pagehide handler stands it, plays out the dealer in
+         the background, and writes the SETTLED balance to the save. */
+  const [coachExposure, setCoachExposure] = useState(0); // live Coach-tab wagers (reported by CoachTable)
+  const gRoundLive = g.phase === "player" || g.phase === "insurance";
+  const gExposureLive = gRoundLive ? g.hands.reduce((s, x) => s + x.bet, 0) : 0;
+  const liveExposure = Math.round((gExposureLive + coachExposure) * 100) / 100;
+  const gRef = useRef(g);
+  gRef.current = g;
+  const balanceRef = useRef(balance);
+  balanceRef.current = balance;
+  const coachExpRef = useRef(0);
+  coachExpRef.current = coachExposure;
+  const abandonHandled = useRef(false);
+
   useEffect(() => {
-    try { localStorage.setItem(LS_KEY, JSON.stringify({ balance, chipSize, agg, useDev, betWithCount, showTags, hideCount })); } catch { /* private mode */ }
-  }, [balance, chipSize, agg, useDev, betWithCount, showTags, hideCount]);
+    const avail = Math.round((balance - liveExposure) * 100) / 100;
+    try { localStorage.setItem(LS_KEY, JSON.stringify({ balance: avail, chipSize, agg, useDev, betWithCount, showTags, hideCount })); } catch { /* private mode */ }
+  }, [balance, liveExposure, chipSize, agg, useDev, betWithCount, showTags, hideCount]);
+
+  const settleOnExit = useCallback(() => {
+    const gv = gRef.current;
+    if (abandonHandled.current || gv.phase !== "player" || !gv.acted) return;
+    abandonHandled.current = true;
+    const S = settleAbandonedRound(gv);
+    if (!S) return;
+    // settled wallet = balance + net (an abandoned Coach practice round stays forfeited)
+    const final = Math.round((balanceRef.current + S.net - coachExpRef.current) * 100) / 100;
+    try {
+      const saved = JSON.parse(localStorage.getItem(LS_KEY)) || {};
+      localStorage.setItem(LS_KEY, JSON.stringify({ ...saved, balance: final }));
+    } catch { /* private mode */ }
+  }, []);
+  useEffect(() => {
+    window.addEventListener("pagehide", settleOnExit);
+    return () => window.removeEventListener("pagehide", settleOnExit);
+  }, [settleOnExit]);
 
   const deal = useCallback(() => { setAnswered(null); setSc(buildScenario(ruleSet, cats)); }, [ruleSet, cats]);
   useEffect(() => { deal(); }, [deal]);
@@ -196,6 +254,7 @@ export default function App() {
   /* ---------------- full game engine (module-scope fns shared with Coach Me) ---------------- */
   function dealNewRound() {
     if (balance < chipSize) return;
+    abandonHandled.current = false; // fresh round — the exit resolver may act on it
     let shoe = g.shoe.length < CUT ? buildShoe() : [...g.shoe];
     const shuffled = g.shoe.length < CUT;
     const rc0 = shuffled ? 0 : g.rc;
@@ -252,6 +311,7 @@ export default function App() {
     if (action === "R" && !canSurrender) return;
     const mtc = Math.floor(cg.rc / (cg.shoe.length / 52));
     const play = getPlay(h.cards, dUp, canDouble, canSplit, mtc, useDev, canSurrender);
+    cg.acted = true; // the player has engaged the hand — abandoning it now resolves instead of forfeiting
     const ok = action === play.move;
     if (!ok) h.mistakes += 1;
     // snapshot the first decision so the round can be replayed with the alternatives afterwards
@@ -496,7 +556,7 @@ export default function App() {
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <div style={{ position: "relative" }}>
                       <div className="text-xs" style={{ color: C.sub }}>Balance</div>
-                      <div className="mono" style={{ color: balance >= STARTING_BALANCE ? C.split : balance <= 0 ? C.stand : C.ink, fontSize: 22, fontWeight: 700, lineHeight: 1 }}>{fmtMoney(gHold ? balance - g.roundNet : balance)}</div>
+                      <div className="mono" style={{ color: balance >= STARTING_BALANCE ? C.split : balance <= 0 ? C.stand : C.ink, fontSize: 22, fontWeight: 700, lineHeight: 1 }}>{fmtMoney(gHold ? balance - g.roundNet : balance - gExposureLive)}</div>
                       {g.phase === "done" && g.roundNet !== 0 && !gHold && (
                         <span key={agg.rounds} className="delta-float mono" style={{ position: "absolute", left: "100%", marginLeft: 8, top: 12, fontSize: 14, fontWeight: 700, whiteSpace: "nowrap", color: g.roundNet > 0 ? C.split : C.stand }}>{fmtSigned(g.roundNet)}</span>
                       )}
@@ -692,7 +752,7 @@ export default function App() {
         )}
 
         {/* ------------------------- COACH ME ------------------------- */}
-        {tab === "coach" && <CoachTable balance={balance} setBalance={setBalance} />}
+        {tab === "coach" && <CoachTable balance={balance} setBalance={setBalance} onLiveExposure={setCoachExposure} />}
       </main>
     </div>
   );
@@ -714,7 +774,7 @@ function chipStack(amount) {
 const COACH_LS = "bjt-coach-v2";
 function loadCoachSaved() { try { return JSON.parse(localStorage.getItem(COACH_LS)) || {}; } catch { return {}; } }
 const COACH_INIT_CS = { hands: 0, decisions: 0, followed: 0, evGiven: 0, bets: 0, aligned: 0, lossChases: 0, winPresses: 0, base: null, lastBet: null, lastNet: null, recent: [] };
-function CoachTable({ balance, setBalance }) {
+function CoachTable({ balance, setBalance, onLiveExposure }) {
   const [cq, setCq] = useState(INIT_G);
   const [betAmt, setBetAmt] = useState(0);
   const [cs, setCs] = useState(() => ({ ...COACH_INIT_CS, ...loadCoachSaved() }));
@@ -826,6 +886,15 @@ function CoachTable({ balance, setBalance }) {
   const active = cq.hands[cq.active];
   const dUp = cq.dealer.length ? baseVal(cq.dealer[0]) : 0;
   const cqExposure = cq.hands.reduce((s, x) => s + x.bet, 0);
+  // Report live Coach wagers up to App so the persisted balance deducts them
+  // too; the unmount cleanup returns them (a discarded practice round is a
+  // refund — the net was never applied).
+  const cqRoundLive = cq.phase === "player" || cq.phase === "insurance";
+  const cqExposureLive = cqRoundLive ? cqExposure : 0;
+  useEffect(() => {
+    if (onLiveExposure) onLiveExposure(cqExposureLive);
+  }, [cqExposureLive, onLiveExposure]);
+  useEffect(() => () => { if (onLiveExposure) onLiveExposure(0); }, [onLiveExposure]);
   const aCanDouble = cq.phase === "player" && active && active.cards.length === 2 && cqExposure + active.bet <= balance;
   const aCanSplit = cq.phase === "player" && active && active.cards.length === 2 && splittable(active.cards) && cq.hands.length < 4 && !active.isSplitAce && cqExposure + active.bet <= balance;
   const aCanHit = cq.phase === "player" && active && handTotal(active.cards).total <= 21;
@@ -844,7 +913,7 @@ function CoachTable({ balance, setBalance }) {
     <div className="play-frame">
       <div className="rounded-xl p-3 mb-2 compact-p" style={{ background: C.panel, border: `1px solid ${C.gold}` }}>
         <div className="flex items-center justify-between flex-wrap gap-2">
-          <div><div className="text-xs" style={{ color: C.sub }}>Balance</div><div className="mono" style={{ fontSize: 20, fontWeight: 700, color: balance >= STARTING_BALANCE ? C.split : C.ink }}>{fmtMoney(cHold ? balance - cq.roundNet : balance)}</div></div>
+          <div><div className="text-xs" style={{ color: C.sub }}>Balance</div><div className="mono" style={{ fontSize: 20, fontWeight: 700, color: balance >= STARTING_BALANCE ? C.split : C.ink }}>{fmtMoney(cHold ? balance - cq.roundNet : balance - cqExposureLive)}</div></div>
           {!hideC && <div className="flex gap-4"><MiniStat label="Running" value={signed(cq.rc)} color={C.ink} /><MiniStat label="True" value={cq.shoe.length ? signed(Math.round(tc * 10) / 10) : "0"} color={tc >= 2 ? C.split : C.ink} /><MiniStat label="Decks" value={cq.shoe.length ? decksRem.toFixed(1) : RULES.decks.toFixed(1)} color={C.sub} /></div>}
         </div>
         <div className="flex items-center justify-between gap-2 mt-2 pt-2 flex-wrap" style={{ borderTop: `1px solid ${C.border}` }}>
