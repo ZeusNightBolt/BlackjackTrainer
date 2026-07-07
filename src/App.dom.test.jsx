@@ -27,10 +27,12 @@ describe("App smoke test", () => {
     // after dealing, real card faces render on the felt (player + dealer up card)
     const cards = document.querySelectorAll(".felt .card-deal, .felt .card-flip");
     expect(cards.length).toBeGreaterThanOrEqual(2);
-    // an action row (Stand/Hit) or an insurance prompt is now present
+    // an action row (Stand/Hit), an insurance prompt, or — when the random deal is an
+    // instant blackjack — the round-over rebet controls are now present
     const hasActions =
       screen.queryByRole("button", { name: /^Stand$/ }) ||
-      screen.queryByRole("button", { name: /insurance/i });
+      screen.queryByRole("button", { name: /insurance/i }) ||
+      screen.queryByRole("button", { name: /change bet/i });
     expect(hasActions).toBeTruthy();
   });
 
